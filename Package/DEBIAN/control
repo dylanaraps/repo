@@ -1,10 +1,10 @@
-Package: net.winneonsword.package
-Name: Test Package
-Version: 1.0
+Package: net.dylanaraps.neofetch.git
+Name: Neofetch (git)
+Version: 1.8-git-4b128f7
 Architecture: iphoneos-arm
-Description: This is a test package from /u/WinneonSword's tutorial repository!
-Depiction: http://repo.winneonsword.net/packages/package.html
-Homepage: http://repo.winneonsword.net
-Maintainer: Jesse Bryan <winneonsword@gmail.com>
-Author: Jesse Bryan <winneonsword@gmail.com>
-Section: Themes
+Description: A fast, highly customizable system info script that supports Linux, OS X, iOS, BSD, Solaris and Windows (Cygwin).
+Homepage: http://dylanaraps.com/repo
+Maintainer: Dylan Araps <dylan.araps@gmail.com>
+Author: Dylan Araps <dylan.araps@gmail.com>
+Section: Utilities
+Depends: bash, coreutils, coreutils-bin, darwintools, system-cmds, gawk, grep

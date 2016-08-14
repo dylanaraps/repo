@@ -19,20 +19,20 @@ export LANG=C
 # Set no case match.
 shopt -s nocasematch
 
-
 # Gather Info {{{
-
 
 # Operating System {{{
 
-case "$(uname)" in
-    "Linux")   os="Linux" ;;
-    "Darwin")  os="$(sw_vers -productName)" ;;
-    *"BSD" | "DragonFly") os="BSD" ;;
-    "CYGWIN"*) os="Windows" ;;
-    "SunOS") os="Solaris" ;;
-    *) printf "%s\n" "Unknown OS detected: $(uname)"; exit 1 ;;
-esac
+getos() {
+    case "$(uname)" in
+        "Linux")   os="Linux" ;;
+        "Darwin")  os="$(sw_vers -productName)" ;;
+        *"BSD" | "DragonFly") os="BSD" ;;
+        "CYGWIN"*) os="Windows" ;;
+        "SunOS") os="Solaris" ;;
+        *) printf "%s\n" "Unknown OS detected: $(uname)"; exit 1 ;;
+    esac
+}
 
 # }}}
 
@@ -119,7 +119,6 @@ getdistro() {
     [ "$osx_buildversion" == "off" ] && \
         distro="${distro/ ${osx_build}}"
 }
-
 
 # }}}
 
@@ -728,11 +727,11 @@ getcpu() {
             cpu="${cpu/ @*}"
 
             # Get cpu speed
-            speed="$(psrinfo -v | tail -2 | head -1 | awk '{print $6}')"
+            speed="$(psrinfo -v | awk '/operates at/ {print $6}')"
             speed="$((speed / 100))"
 
             # Get cpu cores
-            cores="$(kstat -m cpu_info | grep "chip_id" | wc -l | tr -d ' ')"
+            cores="$(kstat -m cpu_info | grep -c "chip_id")"
 
             # Fix for speeds under 1ghz
             if [ -z "${speed:1}" ]; then
@@ -744,7 +743,6 @@ getcpu() {
             cpu="$cpu @ ${speed}GHz"
         ;;
     esac
-
 
     # Remove uneeded patterns from cpu output
     # This is faster than sed/gsub
@@ -983,7 +981,6 @@ getgpu() {
                 ;;
             esac
         ;;
-
 
         "Windows")
             gpu="$(wmic path Win32_VideoController get caption /value)"
@@ -1764,9 +1761,7 @@ getcols() {
 
 # }}}
 
-
 # Images {{{
-
 
 # Wallpaper {{{
 
@@ -1884,7 +1879,6 @@ getascii() {
 
     export LC_ALL=C
 }
-
 
 # }}}
 
@@ -2096,12 +2090,48 @@ getw3m_img_path() {
 
 # }}}
 
+# Display image {{{
+
+displayimage() {
+    if [ "$image" != "ascii" ]; then
+        case "$image_backend" in
+            "w3m")
+                printf "%b%s\n" "0;1;$xoffset;$yoffset;$width;$height;;;;;$img\n4;\n3;" |\
+                $w3m_img_path 2>/dev/null || padding="\033[0C"
+            ;;
+
+            "iterm2")
+                printf "%b%s\a\n" "\033]1337;File=width=${width}px;height=${height}px;inline=1:$(base64 < "$img")"
+            ;;
+
+            "tycat")
+                tycat "$img"
+            ;;
+        esac
+    fi
+}
 
 # }}}
 
+# Get image backend {{{
+
+getimagebackend() {
+    if [ -n "$ITERM_PROFILE" ]; then
+        image_backend="iterm2"
+
+    elif [ "$(tycat 2>/dev/null)" ]; then
+        image_backend="tycat"
+
+    else
+        image_backend="w3m"
+    fi
+}
+
+# }}}
+
+# }}}
 
 # Text Formatting {{{
-
 
 # Info {{{
 
@@ -2427,7 +2457,6 @@ color() {
     esac
 }
 
-
 # }}}
 
 # Bold {{{
@@ -2473,12 +2502,9 @@ trim() {
 
 # }}}
 
-
 # }}}
 
-
 # Other {{{
-
 
 # Error {{{
 
@@ -2534,7 +2560,7 @@ getdefaultconfig() {
 
 # }}}
 
-# Source Config {{{
+# Source config {{{
 
 getuserconfig() {
     # Check $config_file
@@ -2580,10 +2606,9 @@ esac
 getdefaultconfig 2>/dev/null
 [ "${config:-on}" == "on" ] && getuserconfig 2>/dev/null
 
-
 # }}}
 
-# Progress Bars {{{
+# Progress bars {{{
 
 bar() {
     # Get the values
@@ -2617,7 +2642,7 @@ cache() {
 
 # }}}
 
-# KDE Config directory {{{
+# KDE config directory {{{
 
 kdeconfigdir() {
     if [ -n "$KDE_CONFIG_DIR" ]; then
@@ -2636,12 +2661,30 @@ kdeconfigdir() {
 
 # }}}
 
+# Dynamic prompt location {{{
+
+dynamicprompt() {
+    # Get cursor position
+    info_height="$(stty -echo; IFS=';' read -rdR -t 1 -d c -p $'\033[6n\033[c' ROW COL; printf "%s" "${ROW#*[}"; stty echo)"
+
+    # Calculate image height in terminal cells.
+    # The '+ 3' adds a gap between the prompt and the content.
+    [ "$image" != "ascii" ] && [ "$image" != "off" ] && \
+        lines="$((${height:-1} / ${font_height:-1} + 3))"
+
+    # If the info is higher than the ascii/image place the prompt
+    # based on the info height instead of the ascii/image height.
+    [ "${lines:-0}" -lt "${info_height:-0}" ] && lines="$info_height"
+
+    # Set the prompt location
+    [ "$image" != "off" ] && printf "%b%s" "\033[${lines:-0}H"
+}
 
 # }}}
 
+# }}}
 
 # Usage {{{
-
 
 usage() { cat << EOF
 
@@ -2682,7 +2725,6 @@ usage() { cat << EOF
     --birthday_time on/off      Enable/Disable showing the time in birthday output
     --birthday_format format    Format the birthday output. (Uses 'date' cmd format)
 
-
     Text Formatting:
     --colors x x x x x x        Changes the text colors in this order:
                                 title, @, underline, subtitle, colon, info
@@ -2690,13 +2732,11 @@ usage() { cat << EOF
     --underline_char char       Character to use when underlining title
     --bold on/off               Enable/Disable bold text
 
-
     Color Blocks:
     --color_blocks on/off       Enable/Disable the color blocks
     --block_width num           Width of color blocks in spaces
     --block_height num          Height of color blocks in lines
     --block_range start end     Range of colors to print as blocks
-
 
     Progress Bars:
     --progress_char 'elapsed char' 'total char'
@@ -2713,7 +2753,6 @@ usage() { cat << EOF
                                 Takes: bar, infobar, barinfo, off
     --disk_display mode         Progress bar mode.
                                 Takes: bar, infobar, barinfo, off
-
 
     Image:
     --image type                Image source. Where and what image we display.
@@ -2736,7 +2775,6 @@ usage() { cat << EOF
                                 move the text closer to the left side.
     --clean                     Remove all cropped images
 
-
     Ascii:
     --ascii value               Where to get the ascii from, Possible values:
                                 distro, /path/to/ascii
@@ -2746,19 +2784,16 @@ usage() { cat << EOF
                                 Supported distros: Arch, Gentoo, Crux, OpenBSD.
     --ascii_bold on/off         Whether or not to bold the ascii logo.
 
-
     Stdout:
     --stdout info info          Launch neofetch in stdout mode which prints the info
                                 in a plain-text format that you can use with
                                 lemonbar etc.
     --stdout_separator string   String to use as a separator in stdout mode.
 
-
     Screenshot:
     --scrot /path/to/img        Take a screenshot, if path is left empty the screen-
                                 shot function will use \$scrot_dir and \$scrot_name.
     --scrot_cmd cmd             Screenshot program to launch
-
 
     Other:
     --config /path/to/config    Specify a path to a custom config file
@@ -2774,12 +2809,9 @@ EOF
 exit 1
 }
 
-
 # }}}
 
-
 # Args {{{
-
 
 while [ "$1" ]; do
     case $1 in
@@ -2966,13 +2998,13 @@ while [ "$1" ]; do
     shift
 done
 
-
 # }}}
-
 
 # Call Functions and Finish Up {{{
 
 main() {
+    getos
+
     # Restore cursor and clear screen on ctrl+c
     trap 'printf "\033[?25h"; clear; exit' 2
 
@@ -2981,9 +3013,8 @@ main() {
 
     # Distro detection
     getdistro
-    case "${ascii_distro:-auto}" in
-        "auto") ascii_distro="$(trim "$distro")" ;;
-    esac
+    [ "${ascii_distro:-auto}" == "auto" ] && \
+        ascii_distro="$(trim "$distro")"
 
     # Get colors and bold
     bold
@@ -2992,91 +3023,41 @@ main() {
     # Clear the scren
     clear
 
-    # Hide the cursor
-    printf "\033[?25l"
+    # Hide the cursor and disable line wrap
+    printf "\033[?25l\033[?7l"
 
-    # Images {{{
-
-    # Get the image src
+    # Display the image
     if [ "$image" != "off" ]; then
-        # Set the image backend
-        if [ -n "$ITERM_PROFILE" ]; then
-            image_backend="iterm2"
-
-        elif [ "$(tycat 2>/dev/null)" ]; then
-            image_backend="tycat"
-
-        else
-            image_backend="w3m"
-        fi
+        getimagebackend
 
         # Find w3mimgdisplay
         [ "$image_backend" == "w3m" ] && \
         [ "$image" != "ascii" ] && \
             getw3m_img_path
 
-        # Get the image
+        # Get the image src
         getimage
+
+        # Display the image if enabled
+        displayimage
     fi
-
-    # Display the image if enabled
-    if [ "$image" != "off" ] && [ "$image" != "ascii" ]; then
-        case "$image_backend" in
-            "w3m")
-                printf "%b%s\n" "0;1;$xoffset;$yoffset;$width;$height;;;;;$img\n4;\n3;" |\
-                $w3m_img_path 2>/dev/null || padding="\033[0C"
-            ;;
-
-            "iterm2")
-                printf "%b%s\a\n" "\033]1337;File=width=${width}px;height=${height}px;inline=1:$(base64 < "$img")"
-            ;;
-
-            "tycat")
-                tycat "$img"
-            ;;
-        esac
-    fi
-
-    # }}}
-
-    # Disable line wrap
-    printf "\033[?7l"
 
     # Move cursor to the top
     [ "$image" != "off" ] && printf "\033[0H"
 
     # Print the info
     printinfo
-
-    # Dynamic prompt location {{{
-
-    # Get cursor position
-    info_height="$(stty -echo; IFS=';' read -rdR -t 1 -d c -p $'\033[6n\033[c' ROW COL; printf "%s" "${ROW#*[}"; stty echo)"
-
-    # Calculate image height in terminal cells.
-    # The '+ 3' adds a gap between the prompt and the content.
-    [ "$image" != "ascii" ] && [ "$image" != "off" ] && \
-        lines="$((${height:-1} / ${font_height:-1} + 3))"
-
-    # If the info is higher than the ascii/image place the prompt
-    # based on the info height instead of the ascii/image height.
-    [ "${lines:-0}" -lt "${info_height:-0}" ] && lines="$info_height"
-
-    # Set the prompt location
-    [ "$image" != "off" ] && printf "%b%s" "\033[${lines:-0}H"
-
-    # }}}
+    dynamicprompt
 
     # Re-enable line wrap
     printf "%b%s" "\033[?7h"
 
-    # If enabled take a screenshot
     [ "$scrot" == "on" ] && takescrot
 
     # Show error messages
     [ "$verbose" == "on" ] && printf "%s" "$err"
 
-    # Reset exit status of the tests above.
+    # Reset exit status of the tests above
     printf "%s"
 }
 

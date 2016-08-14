@@ -1,6 +1,6 @@
 Package: net.dylanaraps.neofetch.git
 Name: Neofetch (git)
-Version: 1.8-git-e0ac5c1
+Version: 1.8-git-003d9a3
 Architecture: iphoneos-arm
 Description: A fast, highly customizable system info script that supports Linux, OS X, iOS, BSD, Solaris and Windows (Cygwin).
 Homepage: http://dylanaraps.com/repo

@@ -18,6 +18,7 @@ printinfo () {
     info title
     info underline
 
+    info "Model" model
     info "OS" distro
     info "Kernel" kernel
     info "Uptime" uptime
@@ -59,6 +60,10 @@ kernel_shorthand="on"
 
 
 # Distro
+
+# Shorten the output of distro (tiny, on, off)
+# NOTE: This is only possible on Linux
+distro_shorthand="off"
 
 # Mac OS X hide/show build version
 # --osx_buildversion on/off
@@ -395,14 +400,6 @@ scrot_dir="$HOME/Pictures/"
 # --scrot_name str
 scrot_name="neofetch-$(date +%F-%T).png"
 
-
-# }}}
-
-# Stdout options {{{
-
-# Separator for stdout mode
-# --stdout_separator string
-stdout_separator="  "
 
 # }}}
 

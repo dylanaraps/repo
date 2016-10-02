@@ -36,6 +36,82 @@ getos() {
 
 # }}}
 
+# Model {{{
+
+getmodel() {
+    case "$os" in
+        "Linux")
+            if [ -f /sys/devices/virtual/dmi/id/product_name ] ||\
+               [ -f /sys/devices/virtual/dmi/id/product_version ]; then
+                model="$(cat /sys/devices/virtual/dmi/id/product_{name,version} 2>/dev/null)"
+                model="${model/To Be Filled*}"
+
+            elif [ -f /sys/firmware/devicetree/base/model ]; then
+                model="$(< /sys/firmware/devicetree/base/model)"
+
+            elif [ -f /tmp/sysinfo/model ]; then
+                model="$(< /tmp/sysinfo/model)"
+            fi
+        ;;
+
+        "Mac OS X") model="$(sysctl -n hw.model)" ;;
+        "iPhone OS")
+            case "${ios_model:-$(uname -m)}" in
+                "iPad1,1") model="iPad" ;;
+                "iPad2,"[1-4]) model="iPad2" ;;
+                "iPad3,"[1-3]) model="iPad3" ;;
+                "iPad3,"[4-6]) model="iPad4" ;;
+                "iPad4,"[1-3]) model="iPad Air" ;;
+                "iPad5,"[3-4]) model="iPad Air 2" ;;
+                "iPad6,"[7-8]) model="iPad Pro (12.9 Inch)" ;;
+                "iPad6,"[3-4]) model="iPad Pro (9.7 Inch)" ;;
+                "iPad2,"[5-7]) model="iPad mini" ;;
+                "iPad4,"[4-6]) model="iPad mini 2" ;;
+                "iPad4,"[7-9]) model="iPad mini 3" ;;
+                "iPad5,"[1-2]) model="iPad mini 4" ;;
+
+                "iPhone1,1") model="iPhone" ;;
+                "iPhone1,2") model="iPhone 3G" ;;
+                "iPhone2,1") model="iPhone 3GS" ;;
+                "iPhone3,"[1-3]) model="iPhone 4" ;;
+                "iPhone4,1") model="iPhone 4S" ;;
+                "iPhone5,"[1-2]) model="iPhone 4" ;;
+                "iPhone5,"[3-4]) model="iPhone 5c" ;;
+                "iPhone6,"[1-2]) model="iPhone 5s" ;;
+                "iPhone7,2") model="iPhone 6" ;;
+                "iPhone7,1") model="iPhone 6 Plus" ;;
+                "iPhone8,1") model="iPhone 6s" ;;
+                "iPhone8,2") model="iPhone 6s Plus" ;;
+                "iPhone8,4") model="iPhone SE" ;;
+
+                "iPod1,1") model="iPod touch" ;;
+                "ipod2,1") model="iPod touch 2G" ;;
+                "ipod3,1") model="iPod touch 3G" ;;
+                "ipod4,1") model="iPod touch 4G" ;;
+                "ipod5,1") model="iPod touch 5G" ;;
+                "ipod7,1") model="iPod touch 6G" ;;
+            esac
+        ;;
+
+        "BSD")
+            model="$(sysctl -n hw.vendor hw.product 2>/dev/null)"
+        ;;
+
+        "Windows")
+            model="$(wmic computersystem get manufacturer,model /value)"
+            model="${model/Manufacturer'='}"
+            model="${model/Model'='}"
+            model="${model//*To Be Filled*}"
+        ;;
+
+        "Solaris")
+            model="$(prtconf -b | awk -F':' '/banner-name/ {printf $2}')"
+        ;;
+    esac
+}
+
+# }}}
+
 # Distro {{{
 
 getdistro() {
@@ -43,36 +119,72 @@ getdistro() {
 
     case "$os" in
         "Linux" )
-            if type -p lsb_release >/dev/null 2>&1; then
-                distro="$(lsb_release -d 2>/dev/null | awk -F ':' '/Description/ {printf $2}')"
+            if grep -q 'Microsoft' /proc/version >/dev/null 2>&1 || \
+               grep -q 'Microsoft' /proc/sys/kernel/osrelease >/dev/null 2>&1; then
+                case "$distro_shorthand" in
+                    "on")   distro="$(lsb_release -sir 2>/dev/null) [Windows 10]" ;;
+                    "tiny") distro="Windows 10" ;;
+                    *)      distro="$(lsb_release -sd 2>/dev/null) on Windows 10" ;;
+                esac
+                ascii_distro="Windows 10"
+
+            elif type -p lsb_release >/dev/null 2>&1; then
+                case "$distro_shorthand" in
+                    "on")   distro="$(lsb_release -sir 2>/dev/null)" ;;
+                    "tiny") distro="$(lsb_release -si 2>/dev/null)" ;;
+                    *)      distro="$(lsb_release -sd 2>/dev/null)" ;;
+                esac
+
+            elif type -p guix >/dev/null 2>&1; then
+                distro="GuixSD"
 
             elif type -p crux >/dev/null 2>&1; then
                 distro="$(crux)"
+                case "$distro_shorthand" in
+                    "on")   distro="${distro//version}" ;;
+                    "tiny") distro="${distro//version*}" ;;
+                esac
 
             else
-                distro="$(awk -F 'NAME=' '/^NAME=/ {printf $2}' /etc/*ease)"
-                distro="${distro//\"}"
+                # Workarounds are included in every shorthand option
+                case "$distro_shorthand" in
+                    "on")
+                        distro="$(awk -F'=' '/^NAME|VERSION_ID=/ {print $2; exit}' /etc/*ease /usr/lib/*ease)"
+                        [ -z "$distro" ] && distro="$(awk -F'=' '/^DISTRIB_ID|DISTRIB_RELEASE=/ {print $2}' /etc/openwrt_release)"
+                    ;;
 
-                # Workaround for distros that store the value differently.
-                [ -z "$distro" ] && distro="$(awk -F 'TAILS_PRODUCT_NAME="|"' '/^TAILS_PRODUCT_NAME=/ {printf $2}' /etc/*ease)"
-                [ -z "$distro" ] && distro="$(awk '/BLAG/ {print $1; exit}' /etc/*ease)"
+                    "tiny")
+                        distro="$(awk -F'=' '/^NAME=/ {print $2; exit}' /etc/*ease /usr/lib/*ease)"
+                        [ -z "$distro" ] && distro="$(awk -F'=' '/^TAILS_PRODUCT_NAME=/ {print $2}' /etc/*ease)"
+                        [ -z "$distro" ] && distro="$(awk -F'=' '/^DISTRIB_ID=/ {print $2}' /etc/openwrt_release)"
+                    ;;
+
+                    *)
+                        distro="$(awk -F'=' '/^PRETTY_NAME=/ {print $2; exit}' /etc/*ease /usr/lib/*ease)"
+                        [ -z "$distro" ] && distro="$(awk -F'=' '{print $2}' /etc/*ease)"
+                        [ -z "$distro" ] && distro="$(awk '/BLAG/ {print $1; exit}' /etc/*ease)"
+                        [ -z "$distro" ] && distro="$(awk -F'=' '/^DISTRIB_DESCRIPTION=/ {print $2}' /etc/openwrt_release)"
+                    ;;
+                esac
             fi
+            distro="${distro//\"}"
+            distro="${distro//\'}"
         ;;
 
         "Mac OS X")
             osx_version="$(sw_vers -productVersion)"
             osx_build="$(sw_vers -buildVersion)"
 
-            case "${osx_version%.*}" in
-                "10.4") codename="Mac OS X Tiger" ;;
-                "10.5") codename="Mac OS X Leopard" ;;
-                "10.6") codename="Mac OS X Snow Leopard" ;;
-                "10.7") codename="Mac OS X Lion" ;;
-                "10.8") codename="OS X Mountain Lion" ;;
-                "10.9") codename="OS X Mavericks" ;;
-                "10.10") codename="OS X Yosemite" ;;
-                "10.11") codename="OS X El Capitan" ;;
-                "10.12") codename="macOS Sierra" ;;
+            case "$osx_version" in
+                "10.4"*) codename="Mac OS X Tiger" ;;
+                "10.5"*) codename="Mac OS X Leopard" ;;
+                "10.6"*) codename="Mac OS X Snow Leopard" ;;
+                "10.7"*) codename="Mac OS X Lion" ;;
+                "10.8"*) codename="OS X Mountain Lion" ;;
+                "10.9"*) codename="OS X Mavericks" ;;
+                "10.10"*) codename="OS X Yosemite" ;;
+                "10.11"*) codename="OS X El Capitan" ;;
+                "10.12"*) codename="macOS Sierra" ;;
                 *) codename="Mac OS X" ;;
             esac
             distro="$codename $osx_version $osx_build"
@@ -118,6 +230,9 @@ getdistro() {
 
     [ "$osx_buildversion" == "off" ] && \
         distro="${distro/ ${osx_build}}"
+
+    [ "${ascii_distro:-auto}" == "auto" ] && \
+        ascii_distro="$(trim "$distro")"
 }
 
 # }}}
@@ -125,7 +240,7 @@ getdistro() {
 # Title {{{
 
 gettitle() {
-    title="${USER:-$(whoami)}@${HOSTNAME:-$(hostname)}"
+    title="${USER:-$(whoami || printf "%s" "${HOME/*\/}")}@${HOSTNAME:-$(hostname)}"
 }
 
 # }}}
@@ -147,7 +262,7 @@ getuptime() {
     case "$os" in
         "Linux" | "Windows")
             case "$distro" in
-                *"Puppy"* | "Quirky Werewolf"* | "Alpine Linux"* | "Windows"*)
+                *"Puppy"* | "Quirky Werewolf"* | "Alpine Linux"* | "OpenWRT"* | "Windows"*)
                     uptime="$(uptime | awk -F ':[0-9]{2}+ |(, ){1}+' '{printf $2}')"
                 ;;
 
@@ -271,8 +386,14 @@ getpackages() {
             type -p nix-env >/dev/null 2>&1 && \
                 packages="$((packages+=$(ls -d -1 /nix/store/*/ | wc -l)))"
 
+            type -p guix >/dev/null 2>&1 && \
+                packages="$((packages+=$(ls -d -1 /gnu/store/*/ | wc -l)))"
+
             type -p apk >/dev/null 2>&1 && \
                 packages="$((packages+=$(apk info | wc -l)))"
+
+            type -p opkg >/dev/null 2>&1 && \
+                packages="$((packages+=$(opkg list-installed | wc -l)))"
 
             type -p pacman-g2 >/dev/null 2>&1 && \
                 packages="$((packages+=$(pacman-g2 -Q | wc -l)))"
@@ -547,9 +668,10 @@ getcpu() {
         "Linux" | "Windows")
             # Get cpu name
             cpu="$(awk -F ': | @' '/model name/ {printf $2; exit}' /proc/cpuinfo)"
+            cpu_dir="/sys/devices/system/cpu/cpu0/cpufreq"
 
             # Get cpu speed
-            if [ -d "/sys/devices/system/cpu/cpu0/cpufreq" ]; then
+            if [ -d "$cpu_dir" ]; then
                 case "$speed_type" in
                     current) speed_type="scaling_cur_freq" ;;
                     min) speed_type="scaling_min_freq" ;;
@@ -560,8 +682,9 @@ getcpu() {
                     scaling_max) speed_type="scaling_max_freq" ;;
                 esac
 
-                read -t 1 -r speed < \
-                    /sys/devices/system/cpu/cpu0/cpufreq/${speed_type}
+                # Fallback to cpuinfo_max_freq if $speed_type fails
+                read -t 1 -r speed < "${cpu_dir}/${speed_type}" || \
+                read -t 1 -r speed < "${cpu_dir}/cpuinfo_max_freq"
 
                 speed="$((speed / 100000))"
             else
@@ -569,13 +692,13 @@ getcpu() {
                 speed="$((speed / 100))"
             fi
 
-            cores="$(awk -F ': ' '/siblings/ {printf $2; exit}' /proc/cpuinfo)"
+            cores="$(grep -c ^processor /proc/cpuinfo)"
 
             # Fix for speeds under 1ghz
             if [ -z "${speed:1}" ]; then
-               speed="0.${speed}"
+                speed="0.${speed}"
             else
-               speed="${speed:0:1}.${speed:1}"
+                speed="${speed:0:1}.${speed:1}"
             fi
 
             cpu="$cpu @ ${speed}GHz"
@@ -587,8 +710,7 @@ getcpu() {
         ;;
 
         "iPhone OS")
-            ios_model="${ios_model:-$(uname -m)}"
-            case "$ios_model" in
+            case "${ios_model:-$(uname -m)}" in
                 "iPhone1,1" | "iPhone1,2" | "iPod1,1")
                     cpu="Samsung S5L8900 @ 412MHz"
                     cores="1"
@@ -712,9 +834,9 @@ getcpu() {
 
             # Fix for speeds under 1ghz
             if [ -z "${speed:1}" ]; then
-               speed="0.${speed}"
+                speed="0.${speed}"
             else
-               speed="${speed:0:1}.${speed:1}"
+                speed="${speed:0:1}.${speed:1}"
             fi
 
             cpu="$cpu @ ${speed}GHz"
@@ -735,9 +857,9 @@ getcpu() {
 
             # Fix for speeds under 1ghz
             if [ -z "${speed:1}" ]; then
-               speed="0.${speed}"
+                speed="0.${speed}"
             else
-               speed="${speed:0:1}.${speed:1}"
+                speed="${speed:0:1}.${speed:1}"
             fi
 
             cpu="$cpu @ ${speed}GHz"
@@ -778,10 +900,6 @@ getcpu() {
             esac
         ;;
     esac
-
-    [ "$cpu" ] && prin "$subtitle" "$cpu"
-
-    [ "$stdout_mode" != "on" ] && unset cpu
 }
 
 # }}}
@@ -813,10 +931,10 @@ getcpu_usage() {
 
     # Print the bar
     case "$cpu_display" in
-        "info") cpu_usage="${cpu_usage}%" ;;
         "bar") cpu_usage="$(bar $cpu_usage 100)" ;;
         "infobar") cpu_usage="${cpu_usage}% $(bar $cpu_usage 100)" ;;
         "barinfo") cpu_usage="$(bar $cpu_usage 100) ${cpu_usage}%" ;;
+        *) cpu_usage="${cpu_usage}%" ;;
     esac
 }
 
@@ -825,8 +943,8 @@ getcpu_usage() {
 # GPU {{{
 
 getgpu() {
-   case "$os" in
-       "Linux")
+    case "$os" in
+        "Linux")
             gpu="$(PATH="/sbin:$PATH" lspci | grep -F "3D")"
 
             # If a GPU with a prefix of '3D' doesn't exist
@@ -1117,22 +1235,44 @@ getsong() {
         song="$(osascript -e 'tell application "iTunes" to artist of current track as string & " - " & name of current track as string')"
         state="$(osascript -e 'tell application "iTunes" to player state as string')"
 
+    elif [ -n "$(ps x | awk '!(/awk/) && /rhythmbox/')" ]; then
+        song="$(rhythmbox-client --print-playing)"
+        # Well, what can you expect? It's dbus after all.
+        state="$(dbus-send --print-reply --dest=org.mpris.MediaPlayer2.rhythmbox /org/mpris/MediaPlayer2 \
+                 org.freedesktop.DBus.Properties.Get string:'org.mpris.MediaPlayer2.Player' string: 'PlayBackStatus' |\
+                 awk -F 'string "' '{printf $2}')"
+        state="${state//\"}"
+
+    elif [ -n "$(ps x | awk '!(/awk/) && /banshee/')" ]; then
+        artist="$(banshee --query-artist | awk -F':' '{print $2}')"
+        title="$(banshee --query-title | awk -F':' '{print $2}')"
+        song="$artist - $title"
+        state="$(banshee --query-current-state | awk -F':' '{print $2}')"
+
+    elif [ -n "$(ps x | awk '!(/awk/) && /amarok/')" ]; then
+        artist="$(qdbus org.kde.amarok /Player GetMetadata | awk -F':' '/^artist/ {print $2}')"
+        title="$(qdbus org.kde.amarok /Player GetMetadata | awk -F':' '/title/ {print $2}')"
+        song="$artist - $title"
+
+    elif [ -n "$(ps x | awk '!(/awk/) && /deadbeef/')" ]; then
+        song="$(deadbeef --nowplaying '%a - %t')"
+
     else
         song="Not Playing"
     fi
 
     case "$state" in
-        "paused" | "PAUSE")
+        "paused" | "PAUSE" | "Paused")
             song="Paused"
         ;;
 
-        "stopped" | "STOP")
+        "stopped" | "STOP" | "Stopped")
             song="Stopped"
         ;;
     esac
 
     # Display Artist and Title on seperate lines.
-    if [ "$song_shorthand" == "on" ] && [ "$stdout_mode" != "on" ]; then
+    if [ "$song_shorthand" == "on" ]; then
         artist="${song/ -*}"
         song="${song/$artist - }"
 
@@ -1468,17 +1608,29 @@ gettermfont() {
 getdisk() {
     # df flags
     case "$os" in
-        "Linux" | "iPhone OS" | "Windows" | "Solaris") df_flags="-h -l --total" ;;
+        "Linux" | "iPhone OS" | "Windows" | "Solaris")
+            df_flags="-h -l --total"
+            df_dir="total"
+
+            case "$distro" in
+                "OpenWRT"*) df_flags="-h"; df_dir="rootfs" ;;
+            esac
+        ;;
+
         "Mac OS X" | "BSD")
             case "$distro" in
-                "FreeBSD"* | *"OS X"* ) df_flags="-H / -l" ;;
+                "FreeBSD"* | *"OS X"* )
+                    df_flags="-l -H /"
+                    df_dir="/"
+                ;;
+
                 *) return ;;
             esac
         ;;
     esac
 
     # Get the disk info
-    disk="$(df $df_flags 2>/dev/null | awk 'END{print $2 ":" $3 ":" $5}')"
+    disk="$(df $df_flags 2>/dev/null | awk -v dir="$df_dir" '$0 ~ dir {print $2 ":" $3 ":" $5}')"
 
     # Format the output
     disk_used="${disk#*:}"
@@ -1534,7 +1686,7 @@ getbattery() {
                 title="$subtitle"
 
                 # If shorthand is on, print each value on the same line
-                if [ "$battery_shorthand" == "on" ] || [ "$stdout_mode" == "on" ]; then
+                if [ "$battery_shorthand" == "on" ]; then
                     battery="${batteries[*]}"
                     battery="${battery// /%, }"
                     battery="${battery}%"
@@ -1571,18 +1723,18 @@ getbattery() {
                     battery="$(envstat | awk '\\(|\\)' '/charge:/ {print $2}')"
                     battery="${battery/\.*/%}"
                 ;;
+
+                "OpenBSD"*)
+                    battery0full="$(sysctl -n hw.sensors.acpibat0.watthour0)"
+                    battery0full="${battery0full/ Wh*}"
+
+                    battery0now="$(sysctl -n hw.sensors.acpibat0.watthour3)"
+                    battery0now="${battery0now/ Wh*}"
+
+                    [ "$battery0full" ] && \
+                    battery="$((100 * ${battery0now/\.} / ${battery0full/\.}))%"
+                ;;
             esac
-        ;;
-
-        "OpenBSD")
-            battery0full="$(sysctl -n hw.sensors.acpibat0.watthour0)"
-            battery0full="${battery0full/ Wh*}"
-
-            battery0now="$(sysctl -n hw.sensors.acpibat0.watthour3)"
-            battery0now="${battery0now/ Wh*}"
-
-            [ "$battery0full" ] && \
-                battery="$((100 * ${battery0now/\.} / ${battery0full/\.}))%"
         ;;
 
         "Mac OS X")
@@ -1869,14 +2021,16 @@ getascii() {
     ascii_strip="${ascii_strip//'\\'/ }"
     ascii_strip="${ascii_strip//'\'}"
 
-    # Get ascii file size in rows/cols
-    ascii_size="$(awk 'END {printf NR " "}length>max{max=length}END{printf max}' <<< "$ascii_strip")"
-    lines="${ascii_size/ *}"
-    ascii_length="${ascii_size/$lines}"
+    # Get lines/columns of the ascii file in pure bash.
+    ascii_length=0
+    lines=1
+    while IFS='\n' read -r line 2>/dev/null; do
+        [ ${#line} -gt "$ascii_length" ] && ascii_length=${#line}
+        lines=$((lines+=1))
+    done <<< "$ascii_strip"
 
     padding="\033[$((ascii_length + gap))C"
     printf "%b%s" "$print"
-
     export LC_ALL=C
 }
 
@@ -1902,7 +2056,6 @@ getimage() {
     esac
 
     # Get terminal width and height
-    stty -echo
     if [ -n "$TMUX" ]; then
         printf "%b%s" "\033Ptmux;\033\033[14t\033\033[c\033\\"
         read_flags="-d c"
@@ -1916,8 +2069,7 @@ getimage() {
     fi
 
     # The escape code above prints the output AFTER the prompt so this
-    read -t 1 ${read_flags} -s -r term_size
-    stty echo
+    builtin read -s -t 1 ${read_flags} -r term_size
 
     # Split the string
     if [ "$image_backend" == "tycat" ]; then
@@ -1945,11 +2097,14 @@ getimage() {
         [ "${#term_size}" -le 5 ] && err "Your terminal doesn't support \\\033[14t, falling back to ascii mode."
 
         return
+    else
+        clear
     fi
 
     # Get terminal lines and columns
-    lines="$(tput lines)"
-    columns="$(tput cols)"
+    term_blocks="$(stty size)"
+    columns="${term_blocks/* }"
+    lines="${term_blocks/ *}"
 
     # Calculate font size
     font_width="$((term_width / columns))"
@@ -2186,6 +2341,9 @@ info() {
 
     # Print the string
     printf "%b%s\n" "${padding}${string}${reset}"
+
+    # Calculate info height
+    info_height="$((info_height+=1))"
 }
 
 # }}}
@@ -2218,34 +2376,9 @@ prin() {
 
     # Print the info
     printf "%b%s\n" "${padding}${string}${reset}"
-}
 
-# }}}
-
-# Stdout {{{
-
-stdout() {
-    # Read args early for the separator
-    stdout_separator_flag="$(awk -F '--stdout_separator ' '{printf $2}' <<< "${args[@]}")"
-    stdout_separator_flag="${stdout_separator_flag/ '--'*}"
-
-    [ "$stdout_separator_flag" ] && \
-        stdout_separator="$stdout_separator_flag"
-
-    for func in "${args[@]}"; do
-        case "$func" in
-            "--"*) break ;;
-            *)
-                "get$func" 2>/dev/null
-                eval output="\$$func"
-                output="$(trim "$output")"
-                stdout+="${output}${stdout_separator}"
-            ;;
-        esac
-    done
-
-    printf "%s" "${stdout%%${stdout_separator}}"
-    exit
+    # Calculate info height
+    info_height="$((info_height+=1))"
 }
 
 # }}}
@@ -2257,7 +2390,7 @@ getunderline() {
         "on")
             underline="$(printf %"$length"s)"
             underline="${underline// /$underline_char}"
-         ;;
+        ;;
         "off") underline="" ;;
     esac
 }
@@ -2303,7 +2436,7 @@ colors() {
             ascii_distro="redhat"
         ;;
 
-        "Kogaion"* | "Elementary"* | "GalliumOS"*)
+        "Kogaion"* | "Elementary"* | "GalliumOS"* | "Rosa"* | "OpenWrt"*)
             setcolors 4 7
         ;;
 
@@ -2324,7 +2457,7 @@ colors() {
             setcolors 4 8
         ;;
 
-        *"OS X"* | *"iOS"* | "Mac")
+        *"OS X"* | *"iOS"* | "Mac" | *"macOS"*)
             setcolors 2 3 1 1 5 4
             ascii_distro="mac"
         ;;
@@ -2354,7 +2487,7 @@ colors() {
             setcolors 5 7
         ;;
 
-        "OpenBSD"*)
+        "OpenBSD"* | "GuixSD"*)
             setcolors 3 7 6 1 8
         ;;
 
@@ -2376,7 +2509,7 @@ colors() {
         ;;
 
         "Solus"*)
-            setcolors 7 8
+            setcolors 7 4 0
         ;;
 
         "Trisquel"* | "NixOS"* | "Zorin"*)
@@ -2481,7 +2614,7 @@ bold() {
 # Linebreak {{{
 
 getlinebreak() {
-   linebreak=" "
+    linebreak=" "
 }
 
 # }}}
@@ -2656,20 +2789,21 @@ kdeconfigdir() {
 # Dynamic prompt location {{{
 
 dynamicprompt() {
-    # Get cursor position
-    info_height="$(stty -echo; IFS=';' read -rdR -t 1 -d c -p $'\033[6n\033[c' ROW COL; printf "%s" "${ROW#*[}"; stty echo)"
-
     # Calculate image height in terminal cells.
-    # The '+ 3' adds a gap between the prompt and the content.
+    # The '+ 4' adds a gap between the prompt and the content.
     [ "$image" != "ascii" ] && [ "$image" != "off" ] && \
-        lines="$((${height:-1} / ${font_height:-1} + 3))"
+        lines="$((${height:-1} / ${font_height:-1} + 4))"
 
     # If the info is higher than the ascii/image place the prompt
     # based on the info height instead of the ascii/image height.
-    [ "${lines:-0}" -lt "${info_height:-0}" ] && lines="$info_height"
+    if [ "${lines:-0}" -lt "${info_height:-0}" ]; then
+        lines="$((info_height - lines - 2))"
+    else
+        lines="$((lines - info_height - 2))"
+    fi
 
     # Set the prompt location
-    [ "$image" != "off" ] && printf "%b%s" "\033[${lines:-0}H"
+    [ "$image" != "off" ] && printf "\033[${lines/-*/0}B"
 }
 
 # }}}
@@ -2699,6 +2833,8 @@ usage() { cat << EOF
     --cpu_shorthand type        Shorten the output of CPU
                                 Possible values: name, speed, tiny, on, off
     --cpu_cores on/off          Whether or not to display the number of CPU cores
+    --distro_shorthand on/off   Shorten the output of distro (tiny, on, off)
+                                NOTE: This is only possible on Linux
     --kernel_shorthand on/off   Shorten the output of kernel
     --uptime_shorthand on/off   Shorten the output of uptime (tiny, on, off)
     --refresh_rate on/off       Whether to display the refresh rate of each monitor
@@ -2776,12 +2912,6 @@ usage() { cat << EOF
                                 Supported distros: Arch, Gentoo, Crux, OpenBSD.
     --ascii_bold on/off         Whether or not to bold the ascii logo.
 
-    Stdout:
-    --stdout info info          Launch neofetch in stdout mode which prints the info
-                                in a plain-text format that you can use with
-                                lemonbar etc.
-    --stdout_separator string   String to use as a separator in stdout mode.
-
     Screenshot:
     --scrot /path/to/img        Take a screenshot, if path is left empty the screen-
                                 shot function will use \$scrot_dir and \$scrot_name.
@@ -2809,7 +2939,7 @@ getargs() {
     # Check the commandline flags early for '--config none/off'
     case "$@" in
         *"--config off"* | *'--config "off"'* | *"--config 'off'"* | \
-        *"--config none"* | *'--config "none"'* | *"--config 'none'"* | *"--stdout"*)
+        *"--config none"* | *'--config "none"'* | *"--config 'none'"*)
             config="off"
         ;;
 
@@ -2827,6 +2957,7 @@ getargs() {
             --osx_codename) osx_codename="$2" ;;
             --cpu_cores) cpu_cores="$2" ;;
             --speed_type) speed_type="$2" ;;
+            --distro_shorthand) distro_shorthand="$2" ;;
             --kernel_shorthand) kernel_shorthand="$2" ;;
             --uptime_shorthand) uptime_shorthand="$2" ;;
             --cpu_shorthand) cpu_shorthand="$2" ;;
@@ -2947,17 +3078,6 @@ getargs() {
             ;;
             --scrot_cmd) scrot_cmd="$2" ;;
 
-            # Stdout
-            --stdout)
-                unset info_color prin clear bar
-                stdout_mode="on"
-                config="off"
-                case "$2" in
-                    "--"* | "") printf "%s\n" "--stdout requires at least one argument"; exit ;;
-                    *) shift; args=("$@"); stdout ;;
-                esac
-            ;;
-
             # Other
             --config)
                 case "$2" in
@@ -2966,7 +3086,7 @@ getargs() {
                 esac
             ;;
             --test)
-                info=(title underline distro kernel uptime packages shell resolution de wm wmtheme theme icons cpu cpu_usage gpu memory font disk battery song localip publicip users birthday term termfont)
+                info=(title underline model distro kernel uptime packages shell resolution de wm wmtheme theme icons cpu cpu_usage gpu memory font disk battery song localip publicip users birthday term termfont)
 
                 refresh_rate="on"
                 shell_version="on"
@@ -3006,27 +3126,20 @@ getargs() {
 # Call Functions and Finish Up {{{
 
 main() {
+    getos
     getdefaultconfig 2>/dev/null
     getargs "$@"
-    getos
+    getdistro
+
+    # Get colors and bold
+    bold
+    colors
 
     # Restore cursor and clear screen on ctrl+c
     trap 'printf "\033[?25h"; clear; exit' 2
 
     # If the script exits for any reason, unhide the cursor.
     trap 'printf "\033[?25h"' EXIT
-
-    # Distro detection
-    getdistro
-    [ "${ascii_distro:-auto}" == "auto" ] && \
-        ascii_distro="$(trim "$distro")"
-
-    # Get colors and bold
-    bold
-    colors
-
-    # Clear the scren
-    clear
 
     # Hide the cursor and disable line wrap
     printf "\033[?25l\033[?7l"
@@ -3047,8 +3160,15 @@ main() {
         displayimage
     fi
 
-    # Move cursor to the top
-    [ "$image" != "off" ] && printf "\033[0H"
+    # Set cursor position next to ascii art
+    printf "\033[$((${lines:-0} - 4))A"
+
+    # Reset horizontal cursor position
+    printf "\033[9999999D"
+
+    # Move cursor to top of ascii art
+    [ "$image" != "ascii" ] && [ "$image" != "off" ] && \
+        printf "\033[0H"
 
     # Print the info
     printinfo

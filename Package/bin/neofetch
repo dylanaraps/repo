@@ -505,7 +505,7 @@ getde() {
         case "$de" in
             "KDE_SESSION_VERSION"*) de="KDE${de/* = }" ;;
             *"TDE_FULL_SESSION"*) de="Trinity" ;;
-            *"MUFFIN"*) de="Cinnamon" ;;
+            *"MUFFIN"*) de="$(cinnamon --version 2>/dev/null)"; de="${de:-Cinnamon}" ;;
             *"xfce4"*) de="XFCE4" ;;
             *"xfce5"*) de="XFCE5" ;;
         esac
@@ -561,7 +561,10 @@ getwmtheme() {
 
         'Compiz' | 'Mutter'* | 'GNOME Shell' | 'Gala')
             if type -p gsettings >/dev/null 2>&1; then
-                wmtheme="$(gsettings get org.gnome.desktop.wm.preferences theme)"
+                wmtheme="$(gsettings get org.gnome.shell.extensions.user-theme name)"
+
+                [ -z "$wmtheme" ] && \
+                    wmtheme="$(gsettings get org.gnome.desktop.wm.preferences theme)"
 
             elif type -p gconftool-2 >/dev/null 2>&1; then
                 wmtheme="$(gconftool-2 -g /apps/metacity/general/theme)"
@@ -1128,6 +1131,12 @@ getgpu() {
         ;;
     esac
 
+    if [ "$gpu_brand" == "off" ]; then
+        gpu="${gpu/AMD}"
+        gpu="${gpu/NVIDIA}"
+        gpu="${gpu/Intel}"
+    fi
+
     gpu="${gpu}${count}"
 }
 
@@ -1545,7 +1554,7 @@ getterm() {
     esac
 
     case "${name// }" in
-        "${SHELL/*\/}" | *"sh" | "tmux" | "screen") getterm "$parent" ;;
+        "${SHELL/*\/}" | *"sh" | "tmux"* | "screen") getterm "$parent" ;;
         "login" | "init") term="$(tty)"; term="${term/*\/}" ;;
         "ruby" | "1" | "systemd" | "sshd"* | "python"*) unset term ;;
         "gnome-terminal-") term="gnome-terminal" ;;
@@ -1582,7 +1591,7 @@ gettermfont() {
         ;;
 
         "termite")
-            termfont="$(awk -F '= ' '!/^($|#)/ && /font/ {printf $2; exit}' "${XDG_CONFIG_HOME}/termite/config")"
+            termfont="$(awk -F '= ' '!/^($|#|;)/ && /font/ {printf $2; exit}' "${XDG_CONFIG_HOME}/termite/config")"
         ;;
 
         "mintty")
@@ -1679,8 +1688,8 @@ getbattery() {
                     *) index="$battery_num" ;;
                 esac
 
-                batteries=($(cat "/sys/class/power_supply/BAT$battery_num/capacity"))
-                battery_state=($(cat "/sys/class/power_supply/BAT${battery_num}/status"))
+                batteries=("$(cat /sys/class/power_supply/BAT$battery_num/capacity)")
+                battery_state=("$(cat /sys/class/power_supply/BAT${battery_num}/status)")
 
                 # Get the subtitle and reassign it so it doesn't change.
                 title="$subtitle"
@@ -1938,6 +1947,7 @@ getwallpaper() {
                 # Strip quotes etc from the path.
                 img="${img/'file://'}"
                 img="${img//\'}"
+                img="${img//\%20/ }"
             fi
         ;;
 
@@ -2212,10 +2222,6 @@ getimage() {
     img="$thumbnail_dir/$imgname"
 }
 
-takescrot() {
-    $scrot_cmd "${scrot_dir}${scrot_name}"
-}
-
 # }}}
 
 # Find w3m-img {{{
@@ -2251,6 +2257,9 @@ displayimage() {
     if [ "$image" != "ascii" ]; then
         case "$image_backend" in
             "w3m")
+                # Add a tiny delay to fix issues with images not
+                # appearing in specific terminal emulators.
+                sleep 0.05
                 printf "%b%s\n" "0;1;$xoffset;$yoffset;$width;$height;;;;;$img\n4;\n3;" |\
                 $w3m_img_path 2>/dev/null || padding="\033[0C"
             ;;
@@ -2284,6 +2293,48 @@ getimagebackend() {
 
 # }}}
 
+# Screenshot {{{
+
+takescrot() {
+    $scrot_cmd "${scrot_dir}${scrot_name}"
+    [ "$scrot_upload" == "on" ] && scrot_upload
+}
+
+# }}}
+
+# Screenshot Upload {{{
+
+scrot_upload() {
+    if ! type -p curl >/dev/null 2>&1; then
+        printf "%s\n" "[!] Install curl to upload images"
+        return
+    fi
+
+    image_file="${scrot_dir}${scrot_name}"
+    printf "%s\n" "Uploading image..."
+
+    case "$image_host" in
+        "teknik")
+            image_url="$(curl -sf -F file="@${image_file}" "https://api.teknik.io/v1/Upload")"
+            image_url="$(awk -F 'url:|,' '{printf $2}' <<< "${image_url//\"}")"
+        ;;
+
+        "imgur")
+            image_url="$(curl -sH "Authorization: Client-ID $imgur_client_id" -F image="@${image_file}" "https://api.imgur.com/3/upload")"
+            image_url="$(awk -F 'id:|,' '{printf $2}' <<< "${image_url//\"}")"
+            [ "$image_url" ] && image_url="https://i.imgur.com/${image_url}.png"
+        ;;
+    esac
+
+    if [ "$image_url" ]; then
+        printf "%s\n" "$image_url"
+    else
+        printf "%s\n" "[!] Image failed to upload"
+    fi
+}
+
+# }}}
+
 # }}}
 
 # Text Formatting {{{
@@ -2309,14 +2360,6 @@ info() {
 
     # Trim whitespace
     output="$(trim "$output")"
-
-    # Fix rendering issues with w3m and lines that
-    # wrap to the next line by adding a max line
-    # length.
-    if [ "$image" != "off" ] && [ "$image" != "ascii" ] && [ "$1" != "cols" ]; then
-        padding_num="${padding/\\033\[}"
-        output="$(printf "%.$((columns - ${padding_num/C} - gap - ${#subtitle}))s" "$output")"
-    fi
 
     case "$1" in
         title)
@@ -2352,14 +2395,6 @@ info() {
 
 prin() {
     string="$1${2:+: $2}"
-
-    # Fix rendering issues with w3m and lines that
-    # wrap to the next line by adding a max line
-    # length.
-    if [ "$image" != "off" ] && [ "$image" != "ascii" ]; then
-        padding_num="${padding/\\033\[}"
-        string="$(printf "%.$((columns - ${padding_num/C} - gap))s" "$string")"
-    fi
 
     # If $2 doesn't exist we format $1 as info
     if [ -z "$2" ]; then
@@ -2797,13 +2832,33 @@ dynamicprompt() {
     # If the info is higher than the ascii/image place the prompt
     # based on the info height instead of the ascii/image height.
     if [ "${lines:-0}" -lt "${info_height:-0}" ]; then
-        lines="$((info_height - lines - 2))"
+        lines="0"
     else
-        lines="$((lines - info_height - 2))"
+        lines="$((lines - info_height - 4))"
     fi
 
     # Set the prompt location
     [ "$image" != "off" ] && printf "\033[${lines/-*/0}B"
+
+    # Add some padding if the lines are above 0
+    if [ "$lines" -gt 0 ]; then
+        printf "\n\n"
+    fi
+}
+
+# }}}
+
+# Scrot args {{{
+
+scrot_args() {
+    scrot="on"
+    case "$2" in
+        "-"* | "") ;;
+        *)
+            scrot_name="${2##*/}"
+            scrot_dir="${2/$scrot_name}"
+        ;;
+    esac
 }
 
 # }}}
@@ -2840,6 +2895,7 @@ usage() { cat << EOF
     --refresh_rate on/off       Whether to display the refresh rate of each monitor
                                 Unsupported on Windows
     --gpu_shorthand on/off      Shorten the output of GPU (tiny, on, off)
+    --gpu_brand on/off          Enable/Disable GPU brand in output. (AMD/NVIDIA/Intel)
     --gtk_shorthand on/off      Shorten output of gtk theme/icons
     --gtk2 on/off               Enable/Disable gtk2 theme/icons output
     --gtk3 on/off               Enable/Disable gtk3 theme/icons output
@@ -2911,10 +2967,13 @@ usage() { cat << EOF
     --ascii_logo_size           Size of ascii logo.
                                 Supported distros: Arch, Gentoo, Crux, OpenBSD.
     --ascii_bold on/off         Whether or not to bold the ascii logo.
+    --logo | -L                 Hide the info text and only show the ascii logo.
 
     Screenshot:
-    --scrot /path/to/img        Take a screenshot, if path is left empty the screen-
+    --scrot | -s /path/to/img   Take a screenshot, if path is left empty the screen-
                                 shot function will use \$scrot_dir and \$scrot_name.
+    --upload | -su /pth/t/img   Same as --scrot but uploads the scrot to a website.
+    --image_host                Website to upload scrots to. Takes: imgur, teknik
     --scrot_cmd cmd             Screenshot program to launch
 
     Other:
@@ -2943,7 +3002,7 @@ getargs() {
             config="off"
         ;;
 
-        *"--config --"*) ;;
+        *"--config -"*) ;;
         *"--config"*) config="off" ;;
     esac
 
@@ -2962,6 +3021,7 @@ getargs() {
             --uptime_shorthand) uptime_shorthand="$2" ;;
             --cpu_shorthand) cpu_shorthand="$2" ;;
             --gpu_shorthand) gpu_shorthand="$2" ;;
+            --gpu_brand) gpu_brand="$2" ;;
             --refresh_rate) refresh_rate="$2" ;;
             --gtk_shorthand) gtk_shorthand="$2" ;;
             --gtk2) gtk2="$2" ;;
@@ -2979,7 +3039,7 @@ getargs() {
                 for func in "$@"; do
                     case "$func" in
                         "--disable") continue ;;
-                        "--"*) return ;;
+                        "-"*) return ;;
                         *) unset -f "get$func" ;;
                     esac
                 done
@@ -2990,7 +3050,7 @@ getargs() {
                 unset colors
                 for arg in "$2" "$3" "$4" "$5" "$6" "$7"; do
                     case "$arg" in
-                        "--"*) break ;;
+                        "-"*) break ;;
                         *) colors+=($arg)
                     esac
                 done
@@ -3027,10 +3087,10 @@ getargs() {
             # Image
             --image)
                 image="$2"
-                case "$2" in "--"* | "") image="ascii" ;; esac
+                case "$2" in "-"* | "") image="ascii" ;; esac
             ;;
 
-            --size) image_size="$2" ;;
+            --image_size | --size) image_size="$2" ;;
             --crop_mode) crop_mode="$2" ;;
             --crop_offset) crop_offset="$2" ;;
             --xoffset) xoffset="$2" ;;
@@ -3046,14 +3106,14 @@ getargs() {
             --ascii)
                 image="ascii"
                 ascii="$2"
-                case "$2" in "--"* | "") ascii="distro" ;; esac
+                case "$2" in "-"* | "") ascii="distro" ;; esac
             ;;
 
             --ascii_colors)
                 unset ascii_colors
                 for arg in "$2" "$3" "$4" "$5" "$6" "$7"; do
                     case "$arg" in
-                        "--"*) break ;;
+                        "-"*) break ;;
                         *) ascii_colors+=($arg)
                     esac
                 done
@@ -3062,20 +3122,27 @@ getargs() {
 
             --ascii_distro)
                 ascii_distro="$2"
-                case "$2" in "--"* | "") ascii_distro="$distro" ;; esac
+                case "$2" in "-"* | "") ascii_distro="$distro" ;; esac
             ;;
 
             --ascii_logo_size) ascii_logo_size="$2" ;;
             --ascii_bold) ascii_bold="$2" ;;
+            --logo | -L)
+                image="ascii"
+                printinfo() { info linebreak; }
+            ;;
+
 
             # Screenshot
             --scrot | -s)
-                scrot="on"
-                if [ "$2" ]; then
-                    scrot_name="${2##*/}"
-                    scrot_dir="${2/$scrot_name}"
-                fi
+                scrot_args "$@"
             ;;
+            --upload | -su)
+                scrot_upload="on"
+                scrot_args "$@"
+            ;;
+
+            --image_host) image_host="$2" ;;
             --scrot_cmd) scrot_cmd="$2" ;;
 
             # Other
@@ -3114,7 +3181,7 @@ getargs() {
             -v) verbose="on" ;;
             -vv) set -x; verbose="on" ;;
             --help) usage ;;
-            --version) printf "%s\n" "Neofetch 1.8"; exit ;;
+            --version) printf "%s\n" "Neofetch 1.9"; exit ;;
         esac
 
         shift
@@ -3165,10 +3232,6 @@ main() {
 
     # Reset horizontal cursor position
     printf "\033[9999999D"
-
-    # Move cursor to top of ascii art
-    [ "$image" != "ascii" ] && [ "$image" != "off" ] && \
-        printf "\033[0H"
 
     # Print the info
     printinfo

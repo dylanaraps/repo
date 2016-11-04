@@ -524,6 +524,7 @@ getde() {
         *)
             de="${XDG_CURRENT_DESKTOP/i3}"
             de="${de/'X-'}"
+            de="${de/Budgie:GNOME/Budgie}"
         ;;
     esac
 
@@ -578,21 +579,20 @@ getwmtheme() {
     [ -z "$de" ] && getde
 
     case "$wm"  in
-        'BudgieWM') wmtheme="$(gsettings get org.gnome.desktop.wm.preferences theme)" ;;
-        'E16') wmtheme="$(awk -F "= " '/theme.name/ {print $2}' "$HOME/.e16/e_config--0.0.cfg")";;
-        'Sawfish') wmtheme="$(awk -F ")" '/\(quote default-frame-style/ {print $2}' "$HOME/.sawfish/custom")" ;;
+        "E16") wmtheme="$(awk -F "= " '/theme.name/ {print $2}' "$HOME/.e16/e_config--0.0.cfg")";;
+        "Sawfish") wmtheme="$(awk -F ")" '/\(quote default-frame-style/ {print $2}' "$HOME/.sawfish/custom")" ;;
 
-        'Cinnamon' | 'Muffin' | 'Mutter (Muffin)')
+        "Cinnamon" | "Muffin" | "Mutter (Muffin)")
             detheme="$(gsettings get org.cinnamon.theme name)"
             wmtheme="$(gsettings get org.cinnamon.desktop.wm.preferences theme)"
             wmtheme="$detheme (${wmtheme})"
         ;;
 
-        'Compiz' | 'Mutter'* | 'GNOME Shell' | 'Gala')
+        "Compiz" | "Mutter" | "GNOME Shell" | "Gala")
             if type -p gsettings >/dev/null 2>&1; then
                 wmtheme="$(gsettings get org.gnome.shell.extensions.user-theme name)"
 
-                [ -z "$wmtheme" ] && \
+                [ -z "${wmtheme//\'}" ] && \
                     wmtheme="$(gsettings get org.gnome.desktop.wm.preferences theme)"
 
             elif type -p gconftool-2 >/dev/null 2>&1; then
@@ -600,7 +600,7 @@ getwmtheme() {
             fi
         ;;
 
-        'Metacity'*)
+        "Metacity"*)
             if [ "$de" == "Deepin" ]; then
                 wmtheme="$(gsettings get com.deepin.wrap.gnome.desktop.wm.preferences theme 2>/dev/null)"
 
@@ -609,7 +609,7 @@ getwmtheme() {
             fi
         ;;
 
-        'E17' | 'Enlightenment')
+        "E17" | "Enlightenment")
             if type -p eet >/dev/null 2>&1; then
                 wmtheme="$(eet -d "$HOME/.e/e/config/standard/e.cfg" config | awk '/value \"file\" string.*.edj/ {print $4}')"
                 wmtheme="${wmtheme##*/}"
@@ -617,17 +617,17 @@ getwmtheme() {
             fi
         ;;
 
-        'Fluxbox')
+        "Fluxbox")
             [ -f "$HOME/.fluxbox/init" ] && \
                 wmtheme="$(awk -F "/" '/styleFile/ {print $NF}' "$HOME/.fluxbox/init")"
         ;;
 
-        'IceWM'*)
+        "IceWM"*)
             [ -f "$HOME/.icewm/theme" ] && \
                 wmtheme="$(awk -F "[\",/]" '!/#/ {print $2}' "$HOME/.icewm/theme")"
         ;;
 
-        'Openbox')
+        "Openbox")
             if [ "$de" == "LXDE" ] && [ -f "${HOME}/.config/openbox/lxde-rc.xml" ]; then
                 ob_file="lxde-rc"
 
@@ -638,17 +638,17 @@ getwmtheme() {
             wmtheme="$(awk -F "[<,>]" '/<theme/ {getline; print $3}' "$XDG_CONFIG_HOME/openbox/${ob_file}.xml")";
         ;;
 
-        'PekWM')
+        "PekWM")
             [ -f "$HOME/.pekwm/config" ] && \
                 wmtheme="$(awk -F "/" '/Theme/ {gsub(/\"/,""); print $NF}' "$HOME/.pekwm/config")"
         ;;
 
-        'Xfwm4')
+        "Xfwm4")
             [ -f "${HOME}/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml" ] && \
                 wmtheme="$(xfconf-query -c xfwm4 -p /general/theme)"
         ;;
 
-        'KWin'*)
+        "KWin"*)
             kdeconfigdir
             kde_config_dir="${kde_config_dir%/}"
 
@@ -660,7 +660,7 @@ getwmtheme() {
             fi
         ;;
 
-        'Quartz Compositor')
+        "Quartz Compositor")
             wmtheme="$(/usr/libexec/PlistBuddy -c "Print AppleAquaColorVariant" ~/Library/Preferences/.GlobalPreferences.plist)"
             if [ -z "$wmtheme" ] || [ "$wmtheme" == "1" ]; then
                 wmtheme="Blue"
@@ -669,7 +669,7 @@ getwmtheme() {
             fi
         ;;
 
-        *'Explorer')
+        *"Explorer")
             path="/proc/registry/HKEY_CURRENT_USER/Software/Microsoft"
             path+="/Windows/CurrentVersion/Themes/CurrentTheme"
 
@@ -678,7 +678,7 @@ getwmtheme() {
             wmtheme="${wmtheme%.*}"
         ;;
 
-        'Blackbox' | "bbLean"*)
+        "Blackbox" | "bbLean"*)
             path="$(wmic process get ExecutablePath | grep "blackbox")"
             path="${path//'\'/'/'}"
 
@@ -1073,7 +1073,11 @@ getmemory() {
                 "NetBSD"*) memtotal="$(($(sysctl -n hw.physmem64) / 1024 / 1024))" ;;
                 *) memtotal="$(($(sysctl -n hw.physmem) / 1024 / 1024))" ;;
             esac
-            memused="$((memtotal - memfree))"
+
+            case "$distro" in
+                "OpenBSD"*) memused="$(($(vmstat | awk 'END {printf $4}') / 1024))" ;;
+                *) memused="$((memtotal - memfree))" ;;
+            esac
         ;;
 
         "Solaris")
@@ -1331,7 +1335,7 @@ getstyle() {
                 fi
             ;;
 
-            "Gnome"* | "Unity"* | "Budgie")
+            "Gnome"* | "Unity"* | "Budgie"*)
                 if type -p gsettings >/dev/null 2>&1; then
                     gtk3theme="$(gsettings get org.gnome.desktop.interface "$gsettings")"
                     gtk2theme="${gtk3theme}"
@@ -1472,8 +1476,8 @@ getterm() {
         ;;
 
         "Linux")
-            parent="$(grep -F "PPid:" "/proc/${1:-$PPID}/status")"
-            name="$(< "/proc/${parent/PPid:[[:space:]]}/comm")"
+            parent="$(grep -i "PPid:" "/proc/${1:-$PPID}/status")"
+            name="$(< "/proc/$(trim "${parent/PPid:}")/comm")"
         ;;
 
         *)
@@ -1516,11 +1520,11 @@ gettermfont() {
         ;;
 
         "xfce4-terminal")
-            termfont="$(awk -F '=' '!/^($|\/\/)/ && /FontName/ {printf $2}' "${XDG_CONFIG_HOME}/xfce4/terminal/terminalrc")"
+            termfont="$(awk -F '=' '/^FontName/ {a=$2} END{print a}' "${XDG_CONFIG_HOME}/xfce4/terminal/terminalrc")"
         ;;
 
         "termite")
-            termfont="$(awk -F '= ' '!/^($|#|;)/ && /font/ {printf $2; exit}' "${XDG_CONFIG_HOME}/termite/config")"
+            termfont="$(awk -F '= ' '/^font/ {a=$2} END{print a}' "${XDG_CONFIG_HOME}/termite/config")"
         ;;
 
         "mintty")
@@ -1926,6 +1930,9 @@ getascii() {
         elif [ -f "/usr/local/share/neofetch/ascii/distro/${ascii/ *}" ]; then
             ascii="/usr/local/share/neofetch/ascii/distro/${ascii/ *}"
 
+        elif [ -f "/data/data/com.termux/files/usr/share/neofetch/ascii/distro/${ascii/ *}" ]; then
+            ascii="/data/data/com.termux/files/usr/share/neofetch/ascii/distro/${ascii/ *}"
+
         else
             getscriptdir 2>/dev/null
 
@@ -2047,7 +2054,7 @@ getimage() {
     fi
 
     # If $img isn't a file fallback to ascii mode.
-    if [ ! -f "$img" ] || [ "$term_width" -le 10 ]; then
+    if [ ! -f "$img" ] || [ -z "$term_width" ] || [ "$term_width" -le 10 ]; then
         image="ascii"
         getascii
 
@@ -2302,7 +2309,10 @@ info() {
     fi
 
     # If the output is empty, don't print anything
-    [ -z "$output" ] && return
+    if [ -z "$output" ]; then
+        err "Info: Couldn't detect $subtitle"
+        return
+    fi
 
     # Trim whitespace
     output="$(trim "$output")"
@@ -2348,13 +2358,10 @@ info() {
 # Prin {{{
 
 prin() {
-    string="$1${2:+: $2}"
+    string="${1//$'\033[0m'}${2:+: $2}"
 
     # If $2 doesn't exist we format $1 as info
-    if [ -z "$2" ]; then
-        subtitle_color="$info_color"
-        bold=
-    fi
+    [ -z "$2" ] && local subtitle_color="$info_color"
 
     # Format the output
     string="${string/:/${reset}${colon_color}:${info_color}}"
@@ -2404,6 +2411,10 @@ colors() {
     case "$ascii_distro" in
         "Arch"* | "Antergos"*)
             setcolors 6 4
+        ;;
+
+        "BlankOn"*)
+            setcolors 1 7
         ;;
 
         "CentOS"*)
@@ -2708,9 +2719,13 @@ getdefaultconfig() {
     elif [ -f "/usr/local/share/neofetch/config" ]; then
         default_config="/usr/local/share/neofetch/config"
 
+    elif [ -f "/data/data/com.termux/files/usr/share/neofetch/config" ]; then
+        default_config="/data/data/com.termux/files/usr/share/neofetch/config"
+
     else
         getscriptdir
         default_config="${script_dir}/config/config"
+        travis_config="${script_dir}/config/travis"
     fi
 
     if source "$default_config"; then
@@ -2729,6 +2744,11 @@ getuserconfig() {
     if [ -f "$config_file" ]; then
         source "$config_file"
         err "Config: Sourced user config    ($config_file)"
+        return
+
+    elif [ "$config_file" == "travis" ]; then
+        source "$travis_config"
+        err "Config: Sourced user config    ($travis_config)"
         return
     fi
     mkdir -p "$XDG_CONFIG_HOME/neofetch/"
@@ -2842,7 +2862,7 @@ dynamicprompt() {
     # Calculate image height in terminal cells.
     if [ "$image" != "ascii" ]; then
         gettermpadding
-        lines="$(((height + ${border:-0} + ${yoffset:-0}) / font_height))"
+        lines="$(((height + (${border:-0} * 2) + ${yoffset:-0}) / font_height))"
     else
         lines="$((lines-=2))"
     fi
@@ -3004,8 +3024,6 @@ usage() { cat << EOF
     --config none               Launch the script without a config file
     --help                      Print this text and exit
     --version                   Show neofetch version
-    --test                      Launch the script with all functions / options enabled.
-                                This should only be used for testing purposes, ie Travis.CI.
     -v                          Display error messages.
     -vv                         Display a verbose log for error reporting.
 
@@ -3174,37 +3192,10 @@ getargs() {
                     *) config_file="$2"; config="on"; getuserconfig 2>/dev/null ;;
                 esac
             ;;
-            --test)
-                info=(title underline model distro kernel uptime packages shell resolution de wm wmtheme theme icons cpu cpu_usage gpu memory font disk battery song localip publicip users birthday term termfont)
-
-                refresh_rate="on"
-                shell_version="on"
-                cpu_display="infobar"
-                memory_display="infobar"
-                disk_display="infobar"
-                cpu_temp="on"
-
-                printinfo() {
-                    if [ "$TRAVIS_OS_NAME" ]; then
-                        info linebreak
-                        info linebreak
-                    fi
-
-                    for func in "${info[@]}"; do
-                        info "$(tr '[:lower:]' '[:upper:]' <<< "$func")" "$func"
-                    done
-
-                    info linebreak
-                    info cols
-                    info linebreak
-                    printf "%b%s" "\033[$(tput lines)H"
-                }
-            ;;
-
             -v) verbose="on" ;;
             -vv) set -x; verbose="on" ;;
             --help) usage ;;
-            --version) printf "%s\n" "Neofetch 2.0"; exit ;;
+            --version) printf "%s\n" "Neofetch 1.9.1"; exit ;;
         esac
 
         shift

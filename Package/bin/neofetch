@@ -52,11 +52,25 @@ get_distro() {
                 esac
                 ascii_distro="Windows 10"
 
+            elif [[ -f "/etc/GoboLinuxVersion" ]]; then
+                case "$distro_shorthand" in
+                    "on" | "tiny") distro="GoboLinux" ;;
+                    *) distro="GoboLinux $(< /etc/GoboLinuxVersion)"
+                esac
+
             elif [[ -f "/etc/redstar-release" ]]; then
                 case "$distro_shorthand" in
                     "on" | "tiny") distro="Red Star OS" ;;
                     *) distro="Red Star OS $(awk -F'[^0-9*]' '$0=$2' /etc/redstar-release)"
                 esac
+
+            elif type -p lsb_release >/dev/null; then
+                case "$distro_shorthand" in
+                    "on")   lsb_flags="-sir" ;;
+                    "tiny") lsb_flags="-si" ;;
+                    *)      lsb_flags="-sd" ;;
+                esac
+                distro="$(lsb_release $lsb_flags)"
 
             elif type -p guix >/dev/null; then
                 distro="GuixSD"
@@ -77,7 +91,7 @@ get_distro() {
                     source "$file" && break
                 done
 
-                # The 3rd line down matches the fold marker syntax. {{{
+                # Format the distro name.
                 case "$distro_shorthand" in
                     "on") distro="${NAME:-${DISTRIB_ID}} ${VERSION_ID:-${DISTRIB_RELEASE}}" ;;
                     "tiny") distro="${NAME:-${DISTRIB_ID:-${TAILS_PRODUCT_NAME}}}" ;;
@@ -190,12 +204,6 @@ get_model() {
             elif [[ -f /tmp/sysinfo/model ]]; then
                 model="$(< /tmp/sysinfo/model)"
             fi
-
-            model="${model//To Be Filled*}"
-            model="${model//OEM*}"
-            model="${model//Not Applicable}"
-            model="${model//System Product Name}"
-            model="${model//System Version}"
         ;;
 
         "Mac OS X") model="$(sysctl -n hw.model)" ;;
@@ -254,6 +262,14 @@ get_model() {
             model="$(prtconf -b | awk -F':' '/banner-name/ {printf $2}')"
         ;;
     esac
+
+    # Remove dummy OEM info
+    model="${model//To Be Filled*}"
+    model="${model//OEM*}"
+    model="${model//Not Applicable}"
+    model="${model//System Product Name}"
+    model="${model//System Version}"
+    model="${model//Undefined}"
 }
 
 get_title() {
@@ -267,7 +283,7 @@ get_kernel() {
     esac
 
     # Hardcode kernel settings in BSDs
-    if [[ "$os" == "BSD" && ! "$distro" =~ (PacBSD|PCBSD) ]]; then
+    if [[ "$os" == "BSD" && "$distro" =~ "$kernel_name" ]]; then
         case "$distro_shorthand" in
             "on" | "tiny") kernel="$kernel_version" ;;
             *) unset kernel ;;
@@ -366,63 +382,75 @@ get_packages() {
     case "$os" in
         "Linux" | "iPhone OS" | "Solaris" | "GNU")
             type -p pacman >/dev/null && \
-                packages="$(pacman -Qq --color never | wc -l)"
+                packages=("$(pacman -Qq --color never)")
 
             type -p dpkg >/dev/null && \
-                packages="$((packages+=$(dpkg --get-selections | grep -cv deinstall$)))"
+                packages+=("$(dpkg --get-selections | grep -v deinstall$)")
 
             type -p /sbin/pkgtool >/dev/null && \
-                packages="$((packages+=$(ls -1 /var/log/packages | wc -l)))"
+                packages+=("$(ls -1 /var/log/packages)")
 
             type -p rpm >/dev/null && \
-                packages="$((packages+=$(rpm -qa | wc -l)))"
+                packages+=("$(rpm -qa)")
 
             type -p xbps-query >/dev/null && \
-                packages="$((packages+=$(xbps-query -l | wc -l)))"
+                packages+=("$(xbps-query -l)")
 
             type -p pkginfo >/dev/null && \
-                packages="$((packages+=$(pkginfo -i | wc -l)))"
+                packages+=("$(pkginfo -i)")
 
             type -p emerge >/dev/null && \
-                packages="$((packages+=$(ls -d /var/db/pkg/*/* | wc -l)))"
+                packages+=("$(ls -d /var/db/pkg/*/*)")
 
             type -p nix-env >/dev/null && \
-                packages="$((packages+=$(ls -d -1 /nix/store/*/ | wc -l)))"
+                packages+=("$(ls -d -1 /nix/store/*/)")
 
             type -p guix >/dev/null && \
-                packages="$((packages+=$(ls -d -1 /gnu/store/*/ | wc -l)))"
+                packages+=("$(ls -d -1 /gnu/store/*/)")
 
             type -p apk >/dev/null && \
-                packages="$((packages+=$(apk info | wc -l)))"
+                packages+=("$(apk info)")
 
             type -p opkg >/dev/null && \
-                packages="$((packages+=$(opkg list-installed | wc -l)))"
+                packages+=("$(opkg list-installed)")
 
             type -p pacman-g2 >/dev/null && \
-                packages="$((packages+=$(pacman-g2 -Q | wc -l)))"
+                packages+=("$(pacman-g2 -Q)")
 
             type -p cave >/dev/null && \
-                packages="$((packages+=$(ls -d -1 /var/db/paludis/repositories/cross-installed/*/data/* /var/db/paludis/repositories/installed/data/* | wc -l)))"
+                packages+=("$(ls -d -1 /var/db/paludis/repositories/cross-installed/*/data/* /var/db/paludis/repositories/installed/data/*)")
 
             type -p lvu >/dev/null && \
-                packages="$((packages+=$(lvu installed | wc -l)))"
+                packages+=("$(lvu installed)")
 
             type -p tce-status >/dev/null && \
-                packages="$((packages+=$(tce-status -i | wc -l)))"
+                packages+=("$(tce-status -i)")
+
+            type -p Compile >/dev/null && \
+                packages+=("$(ls -d -1 /Programs/*/)")
 
             # pisi is sometimes unavailable in Solus(?). This uses eopkg
             # instead if pisi isn't found.
             if type -p pisi >/dev/null; then
-                packages="$((packages+=$(pisi list-installed | wc -l)))"
+                packages+=("$(pisi list-installed)")
 
             elif type -p eopkg >/dev/null; then
-                packages="$((packages+=$(eopkg list-installed | wc -l)))"
+                packages+=("$(eopkg list-installed)")
             fi
 
             if type -p pkg >/dev/null; then
-                packages="$((packages+=$(ls -1 /var/db/pkg | wc -l)))"
-                (("$packages" == "0")) && packages="$((packages+=$(pkg list | wc -l)))"
+                packages+=("$(ls -1 /var/db/pkg)")
+                (("$packages" == "0")) && packages+=("$(pkg list)")
             fi
+
+            # Count the packages.
+            packages="$(wc -l <<< "${packages[@]}")"
+
+            # Due to the sum of wc -l being off by 1 per package manager
+            # we add the number of package managers to make up for it.
+            # We then remove 2 since the first and last package manager
+            # arent't affected by the off by 1 counting error.
+            packages="$((packages + ${#packages[@]} - 2))"
         ;;
 
         "Mac OS X")
@@ -524,17 +552,18 @@ get_de() {
         ;;
     esac
 
-    if [[ -n "$DISPLAY" && -z "$de" ]]; then
+    # Fallback to using xprop.
+    [[ -n "$DISPLAY" && -z "$de" ]] && \
         de="$(xprop -root | awk '/KDE_SESSION_VERSION|^_MUFFIN|xfce4|xfce5/')"
 
-        case "$de" in
-            "KDE_SESSION_VERSION"*) de="KDE${de/* = }" ;;
-            *"TDE_FULL_SESSION"*) de="Trinity" ;;
-            *"MUFFIN"*) de="$(cinnamon --version)"; de="${de:-Cinnamon}" ;;
-            *"xfce4"*) de="XFCE4" ;;
-            *"xfce5"*) de="XFCE5" ;;
-        esac
-    fi
+    # Format strings
+    case "$de" in
+        "KDE_SESSION_VERSION"*) de="KDE${de/* = }" ;;
+        *"TDE_FULL_SESSION"*) de="Trinity" ;;
+        *"MUFFIN"* | "Cinnamon") de="$(cinnamon --version)"; de="${de:-Cinnamon}" ;;
+        *"xfce4"*) de="XFCE4" ;;
+        *"xfce5"*) de="XFCE5" ;;
+    esac
 }
 
 get_wm() {
@@ -705,14 +734,12 @@ get_cpu() {
                     "min") speed_type="scaling_min_freq" ;;
                     "max") speed_type="scaling_max_freq" ;;
                     "bios") speed_type="bios_limit" ;;
-                    "scaling_current") speed_type="scaling_cur_freq" ;;
-                    "scaling_min") speed_type="scaling_min_freq" ;;
-                    "scaling_max") speed_type="scaling_max_freq" ;;
                 esac
 
                 # Fallback to cpuinfo_max_freq if $speed_type fails
                 speed="$(< "${speed_dir}/${speed_type}")" || \
-                speed="$(< "${speed_dir}/cpuinfo_max_freq")"
+                speed="$(< "${speed_dir}/bios_limit")" || \
+                speed="$(< "${speed_dir}/scaling_max_freq")"
 
                 speed="$((speed / 100000))"
 
@@ -730,7 +757,7 @@ get_cpu() {
 
             # Show/hide hyperthreaded cores
             case "$cpu_cores" in
-                "logical" | "on") cores="$(grep -c ^processor /proc/cpuinfo)" ;;
+                "logical" | "on") cores="$(grep -c "^processor" /proc/cpuinfo)" ;;
                 "physical") cores="$(grep "^core id" /proc/cpuinfo | sort -u | wc -l)" ;;
             esac
         ;;
@@ -788,8 +815,8 @@ get_cpu() {
 
             # Get cpu temp
             if [[ "$cpu_temp" == "on" ]]; then
-                case "$distro" in
-                    "FreeBSD"* | "PacBSD"* | "DragonFly"* | "PCBSD"*)
+                case "$kernel_name" in
+                    "FreeBSD"* | "DragonFly"*)
                         temp="$(sysctl -n dev.cpu.0.temperature)"
                         temp="[${temp/C/°C}]"
                     ;;
@@ -921,7 +948,7 @@ get_cpu_usage() {
 get_gpu() {
     case "$os" in
         "Linux" | "GNU")
-            gpu="$(PATH="/sbin:$PATH" lspci -mm | awk -F '\\"|\\" \\"' '/Display|3D|VGA/ {print $3 " " $4}')"
+            gpu="$(PATH="/sbin:$PATH" lspci -mm | awk -F '\\"|\\" \\"' '/"Display|"3D|"VGA/ {print $3 " " $4}')"
 
             case "$gpu" in
                 *"advanced"*)
@@ -988,8 +1015,8 @@ get_gpu() {
         ;;
 
         "BSD" | "Solaris")
-            case "$distro" in
-                "FreeBSD"* | "DragonFlyBSD"* | "PacBSD"*)
+            case "$kernel_name" in
+                "FreeBSD"* | "DragonFly"*)
                     gpu="$(pciconf -lv | grep -B 4 -F "VGA" | grep -F "device")"
                     gpu="${gpu/*device*= }"
                     gpu="$(trim_quotes "$gpu")"
@@ -1047,21 +1074,28 @@ get_memory() {
         ;;
 
         "BSD")
-            case "$distro" in
-                "NetBSD"*)
-                    memfree="$(($(awk -F ':|kB' '/MemFree:/ {printf $2}' /proc/meminfo) / 1024))"
-                    mem_total="$(($(sysctl -n hw.physmem64) / 1024 / 1024))"
-                ;;
-
-                *)
-                    memfree="$(($(vmstat | awk 'END{printf $5}') / 1024))"
-                    mem_total="$(($(sysctl -n hw.physmem) / 1024 / 1024))"
-                ;;
+            # Mem total
+            case "$kernel_name" in
+                "NetBSD"*) mem_total="$(($(sysctl -n hw.physmem64) / 1024 / 1024))" ;;
+                *) mem_total="$(($(sysctl -n hw.physmem) / 1024 / 1024))" ;;
             esac
 
-            case "$distro" in
-                "OpenBSD"*) mem_used="$(($(vmstat | awk 'END {printf $4}') / 1024))" ;;
-                *) mem_used="$((mem_total - memfree))" ;;
+            # Mem free
+            case "$kernel_name" in
+                "NetBSD"*) mem_free="$(($(awk -F ':|kB' '/MemFree:/ {printf $2}' /proc/meminfo) / 1024))" ;;
+                "FreeBSD"* | "DragonFly"*)
+                    mem_free="$(top -d 1 | awk -F ',' '/^Mem:/ {print $5}')"
+                    mem_free="${mem_free/M Free}"
+                ;;
+
+                "OpenBSD"*) ;;
+                *) mem_free="$(($(vmstat | awk 'END{printf $5}') / 1024))" ;;
+            esac
+
+            # Mem used
+            case "$kernel_name" in
+                "OpenBSD"*) mem_used="$(($(vmstat | awk 'END{printf $4}') / 1024))" ;;
+                *) mem_used="$((mem_total - mem_free))" ;;
             esac
         ;;
 
@@ -1573,7 +1607,7 @@ get_disk() {
 
         "Mac OS X" | "BSD" | "Haiku")
             case "$distro" in
-                "FreeBSD"* | *"OS X"* | "Mac"* )
+                "FreeBSD"* | *"OS X"* | "Mac"*)
                     df_flags="-l -H /"
                     df_dir="/"
                 ;;
@@ -1649,7 +1683,7 @@ get_battery() {
         ;;
 
         "BSD")
-            case "$distro" in
+            case "$kernel_name" in
                 "FreeBSD"* | "DragonFly"*)
                     battery="$(acpiconf -i 0 | awk -F ':\t' '/Remaining capacity/ {print $2}')"
                     battery_state="$(acpiconf -i 0 | awk -F ':\t\t\t' '/State/ {print $2}')"
@@ -1739,8 +1773,6 @@ get_public_ip() {
     if [[ -z "$public_ip" ]] && type -p wget >/dev/null; then
         public_ip="$(wget -T 10 -qO- "$public_ip_host")"
     fi
-
-    cache "public_ip" "$public_ip"
 }
 
 get_users() {
@@ -1771,7 +1803,7 @@ get_birthday() {
         ;;
 
         "BSD")
-            case "$distro" in
+            case "$kernel_name" in
                 "OpenBSD"* | "Bitrig"*)
                     birthday="$(ls -alctT / | awk '/lost\+found/ {printf $6 " " $7 " " $9 " " $8}')"
                     birthday_shorthand="on"
@@ -2009,28 +2041,31 @@ get_w3m_img_path() {
 
 get_wallpaper() {
     case "$os" in
-        "Linux" | "BSD")
-            if type -p feh >/dev/null && [[ -f "$HOME/.fehbg" ]]; then
-                image="$(awk -F\' '/feh/ {printf $2}' "$HOME/.fehbg")"
+        "Linux" | "BSD" | "Solaris" | "GNU")
+            # Get DE if user has disabled the function.
+            [[ -z "$de" ]] && get_de
 
-            elif type -p nitrogen >/dev/null; then
-                image="$(awk -F'=' '/file/ {printf $2;exit;}' "$XDG_CONFIG_HOME/nitrogen/bg-saved.cfg")"
+            case "$de" in
+                "Cinnamon"*) image="$(gsettings get org.cinnamon.desktop.background picture-uri)" ;;
+                "MATE"*)     image="$(gsettings get org.mate.background picture-filename)" ;;
+                "XFCE"*)     image="$(xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image)" ;;
+                *)
+                    if type -p feh >/dev/null && [[ -f "$HOME/.fehbg" ]]; then
+                        image="$(awk -F\' '/feh/ {printf $2}' "$HOME/.fehbg")"
 
-            elif type -p gsettings >/dev/null; then
-                # Get DE if user has disabled the function.
-                [[ -z "$de" ]] && get_de
+                    elif type -p nitrogen >/dev/null; then
+                        image="$(awk -F'=' '/file/ {printf $2;exit;}' "$XDG_CONFIG_HOME/nitrogen/bg-saved.cfg")"
 
-                case "$de" in
-                    "Cinnamon"*) image="$(gsettings get org.cinnamon.desktop.background picture-uri)" ;;
-                    "MATE"*)     image="$(gsettings get org.mate.background picture-filename)" ;;
-                    *)           image="$(gsettings get org.gnome.desktop.background picture-uri)" ;;
-                esac
+                    else
+                        image="$(gsettings get org.gnome.desktop.background picture-uri)"
+                    fi
+                ;;
+            esac
 
-                # Strip quotes etc from the path.
-                image="${image/'file://'}"
-                image="$(trim_quotes "$image")"
-                image="${image//\%20/ }"
-            fi
+            # Strip quotes etc from the path.
+            image="${image/'file://'}"
+            image="$(trim_quotes "$image")"
+            image="${image//\%20/ }"
         ;;
 
         "Mac OS X")
@@ -2112,7 +2147,8 @@ get_term_size() {
         elif type -p xwininfo >/dev/null 2>&1; then
             # Get the focused window's ID.
             if type -p xdpyinfo >/dev/null 2>&1; then
-                current_window="$(xdpyinfo | grep -F "focus" | grep -E -o "0x[0-9a-f]+")"
+                current_window="$(xdpyinfo | grep -E -o "focus:.*0x[0-9a-f]+")"
+                current_window="${current_window/*window }"
             elif type -p xprop >/dev/null 2>&1; then
                 current_window="$(xprop -root | awk '/_NET_ACTIVE_WINDOW\(WINDOW\)/{print $NF}')"
             fi
@@ -2293,7 +2329,7 @@ to_off() {
 
 take_scrot() {
     if [[ -d "$scrot_dir" ]]; then
-        $scrot_cmd "${scrot_dir}${scrot_name}"
+        scrot_program "${scrot_dir}${scrot_name}" 2>/dev/null
     else
         printf "%s\n" "Screenshot: $scrot_dir doesn't exist. Edit the config file or create the directory to take screenshots."
     fi
@@ -2312,7 +2348,7 @@ scrot_upload() {
 
     case "$image_host" in
         "teknik")
-            image_url="$(curl -sf -F file="@${image_file}" "https://api.teknik.io/v1/Upload")"
+            image_url="$(curl -sf -F file="@${image_file};type=image/png" "https://api.teknik.io/v1/Upload")"
             image_url="$(awk -F 'url:|,' '{printf $2}' <<< "${image_url//\"}")"
         ;;
 
@@ -2335,6 +2371,47 @@ scrot_args() {
             scrot_dir="${2/$scrot_name}"
         ;;
     esac
+}
+
+scrot_program() {
+    # Detect screenshot program.
+    #
+    # We first check to see if an X server is running before
+    # falling back to OS specific screenshot tools.
+    if [[ -n "$DISPLAY" ]]; then
+        if [[ "$scrot_cmd" != "auto" ]] && type -p "$scrot_cmd" >/dev/null; then
+            scrot_program="$scrot_cmd"
+
+        elif type -p scrot >/dev/null; then
+            scrot_program="scrot"
+
+        elif type -p maim >/dev/null; then
+            scrot_program="maim"
+
+        elif type -p import >/dev/null; then
+            scrot_program="import -window root"
+
+        elif type -p imlib2_grab >/dev/null; then
+            scrot_program="imlib2_grab"
+
+        elif type -p gnome-screenshot >/dev/null; then
+            scrot_program="gnome-screenshot -f"
+
+        else
+            err "Scrot: No screen capture tool found."
+            return
+        fi
+    else
+        case "$os" in
+            "Mac OS X") scrot_program="screencapture -S" ;;
+            "Haiku") scrot_program="screenshot -s" ;;
+        esac
+    fi
+
+    # Take the scrot.
+    $scrot_program "$1"
+
+    err "Scrot: Screen captured using $scrot_program"
 }
 
 # TEXT FORMATTING
@@ -2484,12 +2561,21 @@ get_distro_colors() {
     #
     # $ascii_distro is the same as $distro
     case "$ascii_distro" in
-        "Arch"* | "Kogaion"* | "Elementary"* | "GalliumOS"* | "Rosa"* | "OpenWrt"* | "Netrunner"* | "PCLinuxOS"* | "Slackware"* | "KaOS"* | "Kubuntu"* | "Lubuntu"* | "Xubuntu"* | "OpenIndiana"* | "Fedora"* | "Korora"* | "Sabayon"* | "Frugalware"* | "Exherbo"* | "Scientific"* | "Solus"* | "ChaletOS"*)
+        "Arch"* | "Kogaion"* | "Elementary"* | "GalliumOS"* | "Rosa"* | "OpenWrt"* | "Netrunner"* | "PCLinuxOS"* | "Slackware"* | "KaOS"* | "Kubuntu"* | "Lubuntu"* | "Xubuntu"* | "OpenIndiana"* | "Fedora"* | "Korora"* | "Sabayon"* | "Frugalware"* | "Exherbo"* | "Scientific"* | "Solus"* | "ChaletOS"* | "Apricity"* | "SwagArch"* | "AOSC"* | "Ubuntu-Budgie"*)
             set_colors 4 7 1
+        ;;
+
+        "RFRemix"*)
+            set_colors 4 7 1
+            ascii_distro="Fedora"
         ;;
 
         "CentOS"*)
             set_colors 3 2 4 5 7
+        ;;
+
+        "GoboLinux"*)
+            set_colors 5 4 6 2
         ;;
 
         "CRUX"* | "Chakra"* | "gNewSense"* | "SailfishOS"* | "Alpine"* | "Ubuntu-GNOME"* | "Qubes"*)
@@ -2590,7 +2676,7 @@ get_distro_colors() {
             set_colors 2 8
         ;;
 
-        "Mageia"* | "Porteus"*)
+        "Mageia"* | "Porteus"* | "Parrot"*)
             set_colors 6 7
         ;;
 
@@ -2634,12 +2720,13 @@ get_distro_colors() {
 
     # Overwrite distro colors if '$ascii_colors' doesn't
     # equal 'distro'.
-    [[ "${ascii_colors[0]}" != "distro" ]] && \
+    if [[ "${ascii_colors[0]}" != "distro" ]]; then
+        color_text="off"
         set_colors ${ascii_colors[@]}
+    fi
 }
 
 set_colors() {
-    # Ascii colors
     c1="$(color "$1")${ascii_bold}"
     c2="$(color "$2")${ascii_bold}"
     c3="$(color "$3")${ascii_bold}"
@@ -2647,7 +2734,10 @@ set_colors() {
     c5="$(color "$5")${ascii_bold}"
     c6="$(color "$6")${ascii_bold}"
 
-    # Text colors
+    [[ "$color_text" != "off" ]] && set_text_colors $@
+}
+
+set_text_colors() {
     if [[ "${colors[0]}" == "distro" ]]; then
         title_color="$(color "$1")"
         at_color="$reset"
@@ -3027,6 +3117,11 @@ usage() { printf "%s" "
                                 distro, /path/to/ascii
     --ascii_colors x x x x x x  Colors to print the ascii art
     --ascii_distro distro       Which Distro's ascii art to print
+                                NOTE: Arch and Ubuntu have 'old' logo varients.
+                                NOTE: Use 'arch_old' or 'ubuntu_old' to use the old logos.
+                                NOTE: Ubuntu has flavor varients.
+                                NOTE: Change this to 'Lubuntu', 'Xubuntu', 'Ubuntu-GNOME'
+                                or 'Ubuntu-Budgie' to use the flavors.
     --ascii_logo_size           Size of ascii logo.
                                 Supported distros: Arch, Gentoo, Crux, OpenBSD.
     --ascii_bold on/off         Whether or not to bold the ascii logo.
@@ -3145,7 +3240,7 @@ get_args() {
             # Image
             "--image")
                 image_source="$2"
-                case "$2" in "-"* | "") image_backend="ascii" ;; esac
+                case "$2" in "-"* | "" | "ascii") image_backend="ascii" ;; esac
             ;;
 
             "--image_size" | "--size") image_size="$2" ;;
@@ -3216,7 +3311,7 @@ get_args() {
             "-v") verbose="on" ;;
             "-vv") set -x; verbose="on" ;;
             "--help") usage ;;
-            "--version") printf "%s\n" "Neofetch 2.0"; exit ;;
+            "--version") printf "%s\n" "Neofetch 2.0.1"; exit ;;
         esac
 
         shift

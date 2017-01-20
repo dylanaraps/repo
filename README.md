@@ -1,5 +1,1 @@
-# Dylan's Cydia Repo
-
-Packages:
-
-- Neofetch
+Add http://dylanaraps.com/repo in Cydia.

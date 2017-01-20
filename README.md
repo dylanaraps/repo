@@ -1,5 +1,5 @@
 # Dylan's Cydia Repo
 
-Packages
+Packages:
 
-- Neofetch (git)
+- Neofetch

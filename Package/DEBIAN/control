@@ -1,8 +1,8 @@
 Package: net.dylanaraps.neofetch
 Name: Neofetch
-Version: 2.0.2-1
+Version: 3.0-2
 Architecture: iphoneos-arm
-Description: A fast, highly customizable system info script that supports Linux, MacOS, iOS, BSD, Solaris, Android, Haiku, GNU Hurd and Windows (Cygwin/Windows 10 Linux subsystem).
+Description: A fast, highly customizable system info script that supports Linux, MacOS, iOS, BSD, Solaris, Android, Haiku, GNU Hurd, MINIX, AIX and Windows (Cygwin/MSYS2/Windows 10 Linux subsystem)
 Repo: https://github.com/dylanaraps/neofetch
 Homepage: http://dylanaraps.com/repo
 Maintainer: Dylan Araps <dylan.araps@gmail.com>

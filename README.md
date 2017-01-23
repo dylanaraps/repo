@@ -1,5 +1,2 @@
-# Dylan's Cydia Repo
-
-Packages
-
-- Neofetch (git)
+<br\>
+Add [http://dylanaraps.com/repo](http://dylanaraps.com/repo) in Cydia.

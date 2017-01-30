@@ -8,6 +8,9 @@
 # Created by Dylan Araps
 # https://github.com/dylanaraps/
 
+# Neofetch version.
+version="3.0.2"
+
 bash_version="${BASH_VERSION/.*}"
 sys_locale="${LANG:-C}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
@@ -53,13 +56,12 @@ get_distro() {
 
     case "$os" in
         "Linux" | "BSD" | "MINIX")
-            if [[ "$(< /proc/version)" == *"Microsoft"* || "$(< /proc/sys/kernel/osrelease)" == *"Microsoft"* ]]; then
+            if [[ "$(< /proc/version)" == *"Microsoft"* || "$kernel_version" == *"Microsoft"* ]]; then
                 case "$distro_shorthand" in
                     "on")   distro="$(lsb_release -sir) [Windows 10]" ;;
                     "tiny") distro="Windows 10" ;;
                     *)      distro="$(lsb_release -sd) on Windows 10" ;;
                 esac
-                ascii_distro="Windows 10"
 
             elif [[ -f "/etc/GoboLinuxVersion" ]]; then
                 case "$distro_shorthand" in
@@ -471,6 +473,9 @@ get_packages() {
             type -p pkg_info >/dev/null && \
                 packages="$((packages+=$(pkg_info | wc -l)))"
 
+            type -p crew >/dev/null && \
+                packages="$((packages+=$(ls -l /usr/local/etc/crew/meta/*.filelist | wc -l)))"
+
             if type -p pkg >/dev/null; then
                 case "$kernel_name" in
                     "FreeBSD") packages="$((packages+=$(pkg info | wc -l)))" ;;
@@ -526,7 +531,7 @@ get_shell() {
     esac
 
     if [[ "$shell_version" == "on" ]]; then
-        case "${SHELL##*/}" in
+        case "${shell_name:=${SHELL##*/}}" in
             "bash") shell+="${BASH_VERSION/-*}" ;;
             "sh" | "ash" | "dash") ;;
 
@@ -538,7 +543,7 @@ get_shell() {
 
             *)
                 shell+="$("$SHELL" --version 2>&1)"
-                shell="${shell/ ${SHELL##*/}}"
+                shell="${shell/ "${shell_name}"}"
             ;;
         esac
 
@@ -584,7 +589,7 @@ get_de() {
             # the desktop variables are sometimes also set to the
             # window manager name. This checks to see if WM == DE
             # and dicards the DE value.
-            [[ "$wm" && "$de" =~ $wm ]] && { unset -v de; return; }
+            [[ "$wm" && "$de" =~ ^$wm$ ]] && { unset -v de; return; }
         ;;
     esac
 
@@ -1075,7 +1080,12 @@ get_gpu() {
                     ;;
 
                     *"intel"*)
-                        gpu="Intel Integrated Graphics"
+                        gpu="$(glxinfo | grep "Device:.*Intel")"
+                        gpu="${gpu/*Intel/Intel}"
+                        gpu="${gpu/'(R)'}"
+                        gpu="${gpu/ \(*}"
+
+                        [[ -z "$(trim "$gpu")" ]] && gpu="Intel Integrated Graphics"
                     ;;
 
                     *"virtualbox"*)
@@ -1089,7 +1099,7 @@ get_gpu() {
                     gpu="${gpu/Intel }"
                 fi
 
-                prin "${subtitle}${gpu_num}" "$gpu"
+                prin "${subtitle:+${subtitle}${gpu_name}}" "$gpu"
                 ((++gpu_num))
             done
 
@@ -1244,9 +1254,10 @@ get_memory() {
             mem_total="${mem_stat[11]/.*}"
             mem_free="${mem_stat[16]/.*}"
             mem_used="$((mem_total - mem_free))"
+            mem_label="MB"
         ;;
     esac
-    memory="${mem_used}MB / ${mem_total}MB"
+    memory="${mem_used}${mem_label:-MiB} / ${mem_total}${mem_label:-MiB}"
 
     # Bars.
     case "$memory_display" in
@@ -1277,9 +1288,9 @@ get_song() {
         "google play"*) song="$(gpmdp-remote current)" ;;
         "rhythmbox"*)   song="$(rhythmbox-client --print-playing)" ;;
         "deadbeef"*)    song="$(deadbeef --nowplaying-tf  '%artist% - %title%')" ;;
-        "audacious"*)   song="$(audtool current-song)" ;;
         "xmms2d"*)      song="$(xmms2 current -f '${artist} - ${title}')" ;;
         "qmmp"*)        song="$(qmmp --nowplaying '%p - %t')" ;;
+        "audacious"*)   get_song_dbus "audacious" ;;
         "gnome-music"*) get_song_dbus "GnomeMusic" ;;
         "lollypop"*)    get_song_dbus "Lollypop" ;;
         "clementine"*)  get_song_dbus "clementine" ;;
@@ -1327,14 +1338,18 @@ get_song() {
             song="$(dbus-send --print-reply --dest=net.sacredchao.QuodLibet /net/sacredchao/QuodLibet net.sacredchao.QuodLibet.CurrentSong |\
                     awk -F'"' '/artist/ {getline; a=$2} /title/ {getline; t=$2} END{print a " - " t}')"
         ;;
+
+        *)
+            mpc >/dev/null 2>&1 && song="$(mpc current)"
+        ;;
     esac
 
-    [[ "$(trim "$song")" = "-" ]] && unset -v song
+    [[ "$(trim "$song")" == "-" ]] && unset -v song
 
     # Display Artist and Title on separate lines.
-    if [[ "$song_shorthand" == "on" ]]; then
+    if [[ "$song_shorthand" == "on" && "$song" ]]; then
         artist="${song/ -*}"
-        song="${song/$artist - }"
+        song="${song/*-}"
 
         if [[ "$song" != "$artist" ]]; then
             prin "Artist" "$artist"
@@ -1610,6 +1625,7 @@ get_term_font() {
             term_font="$(awk -F ':|#' '/normal:/ {getline; print}' "${XDG_CONFIG_HOME}/alacritty/alacritty.yml")"
             term_font="${term_font/*family:}"
             term_font="${term_font/$'\n'*}"
+            term_font="${term_font/\#*}"
         ;;
 
         "Apple_Terminal")
@@ -1740,7 +1756,11 @@ get_disk() {
         esac
 
         # Append '(disk mount point)' to the subtitle.
-        prin "${subtitle} (${disk_sub})" "$disk"
+        if [[ -z "$subtitle" ]]; then
+            prin "${disk_sub}" "$disk"
+        else
+            prin "${subtitle} (${disk_sub})" "$disk"
+        fi
     done
 }
 
@@ -1766,7 +1786,7 @@ get_battery() {
                     "barinfo") battery="$(bar "$capacity" 100) ${battery}" ;;
                 esac
 
-                prin "${subtitle}${bat: -1}" "$battery"
+                prin "${subtitle:+${subtitle}${bat: -1}}" "$battery"
             done
             return
         ;;
@@ -1940,9 +1960,11 @@ get_cols() {
         cols="${cols//nl/\\n\\033[${text_padding}C${zws}}"
 
         printf "%b\n" "\033[${text_padding}C${zws}${cols}"
-        info_height="$((info_height+=block_height+2))"
+    else
+        printf "\n"
     fi
 
+    info_height="$((info_height+=block_height+2))"
     unset -v blocks blocks2 cols
 
     # Tell info() that we printed manually.
@@ -1952,7 +1974,7 @@ get_cols() {
 # IMAGES
 
 image_backend() {
-    if [[ ! "$image_backend" =~ (off|ascii) ]]; then
+    if [[ ! "$image_backend" =~ ^(off|ascii)$ ]]; then
         if ! type -p convert >/dev/null 2>&1; then
             image_backend="ascii"
             err "Image: Imagemagick not found, falling back to ascii mode."
@@ -1977,7 +1999,6 @@ image_backend() {
                 clear
                 zws="​ "
             else
-                unset image_program
                 to_ascii "Image: Failed to find terminal window size."
                 err "Image: Check the 'Images in the terminal' wiki page for more info,"
                 return
@@ -2001,10 +2022,17 @@ image_backend() {
 }
 
 get_ascii() {
-    if [[ ! -f "$image_source" || "$image_source" =~ (auto|ascii) ]]; then
+    if [[ ! -f "$image_source" ||
+          "$image_source" =~ ^(auto|ascii)$ ||
+          "$image_source" =~ \.(png|jpg|jpe|jpeg|gif)$ ]]; then
+
         # Fallback to distro ascii mode if custom ascii isn't found.
-        [[ ! "$image_source" =~ (auto|ascii) ]] && \
+        [[ ! "$image_source" =~ ^(auto|ascii)$ ]] && \
             err "Ascii: Ascii file not found, using distro ascii."
+
+        # Fallback to distro ascii mode if source is an image.
+        [[ "$image_source" =~ \.(png|jpg|jpe|jpeg|gif)$ ]] && \
+            err "Image: Source is image file but ascii backend was selected. Using distro ascii."
 
         if [[ -d "/usr/share/neofetch/ascii/distro" ]]; then
             ascii_dir="/usr/share/neofetch/ascii/distro"
@@ -2014,6 +2042,9 @@ get_ascii() {
 
         elif [[ -d "/data/data/com.termux/files/usr/share/neofetch/ascii/distro" ]]; then
             ascii_dir="/data/data/com.termux/files/usr/share/neofetch/ascii/distro"
+
+        elif [[ -d "/boot/home/config/non-packaged/share/neofetch/ascii/distro" ]]; then
+            ascii_dir="/boot/home/config/non-packaged/share/neofetch/ascii/distro"
 
         else
             [[ -z "$script_dir" ]] && script_dir="$(get_full_path "$0")"
@@ -2059,7 +2090,7 @@ get_ascii() {
 
 get_image_source() {
     case "$image_source" in
-        "auto" | "wallpaper")
+        "auto" | "wall" | "wallpaper")
             get_wallpaper 2>/dev/null
         ;;
 
@@ -2079,7 +2110,7 @@ get_image_source() {
         ;;
     esac
 
-    err "Image: Using image $image"
+    err "Image: Using image '$image'"
 }
 
 get_wallpaper() {
@@ -2178,7 +2209,7 @@ get_term_size() {
         printf "%b" "\033Ptmux;\033\033[14t\033\033[c\033\\"
         read_flags=(-d c)
 
-    elif [[ "$image_program" == "tycat" ]]; then
+    elif [[ "$image_backend" == "tycat" ]]; then
         printf "%b" "\033}qs\000"
 
     else
@@ -2192,7 +2223,7 @@ get_term_size() {
     IFS=";" read -s -t 1 "${read_flags[@]}" -r -a term_size
 
     # Split the string into height/width.
-    if [[ "$image_program" == "tycat" ]]; then
+    if [[ "$image_backend" == "tycat" ]]; then
         term_width="$((term_size[2] * term_size[0]))"
         term_height="$((term_size[3] * term_size[1]))"
 
@@ -2202,7 +2233,7 @@ get_term_size() {
     fi
 
     # Get terminal width/height if \033[14t is unsupported.
-    if [[ -z "$term_width" && "$image_program" == "w3m" ]]; then
+    if [[ -z "$term_width" && "$image_backend" == "w3m" ]]; then
         if type -p xdotool >/dev/null 2>&1; then
             current_window="$(xdotool getactivewindow)"
             source <(xdotool getwindowgeometry --shell "$current_window")
@@ -2369,6 +2400,7 @@ display_image() {
 
         "iterm2")
             printf "%b\a\n" "\033]1337;File=width=${width}px;height=${height}px;inline=1:$(base64 < "$image")"
+            zws=
         ;;
 
         "tycat")
@@ -2428,7 +2460,16 @@ scrot_upload() {
     fi
 
     image_file="${scrot_dir}${scrot_name}"
-    printf "%s\n" "Uploading image..."
+
+    # Print a message letting the user know we're uploading
+    # the screenshot.
+    printf "%s\r" "Uploading scrot"
+    sleep .2
+    printf "%s\r" "Uploading scrot."
+    sleep .2
+    printf "%s\r" "Uploading scrot.."
+    sleep .2
+    printf "%s\r" "Uploading scrot..."
 
     case "$image_host" in
         "teknik")
@@ -2492,6 +2533,16 @@ scrot_program() {
         esac
     fi
 
+    # Print a message letting the user know we're taking
+    # a screenshot.
+    printf "%s\r" "Taking scrot"
+    sleep .2
+    printf "%s\r" "Taking scrot."
+    sleep .2
+    printf "%s\r" "Taking scrot.."
+    sleep .2
+    printf "%s\r" "Taking scrot..."
+
     # Take the scrot.
     "${scrot_program[@]}" "$1"
 
@@ -2502,7 +2553,7 @@ scrot_program() {
 
 info() {
     # Save subtitle value.
-    subtitle="$1"
+    [[ "$2" ]] && subtitle="$1"
 
     # Make sure that $prin is unset.
     unset -v prin
@@ -2517,25 +2568,35 @@ info() {
     output="$(trim "${!2:-${!1}}")"
 
     if [[ "$2" && "${output// }" ]]; then
-        length="$((${#1} + ${#output} + 2))"
         prin "$1" "$output"
 
     elif [[ "${output// }" ]]; then
-        [[ -z "$length" ]] && length="${#output}"
         prin "$output"
 
     else
         err "Info: Couldn't detect ${1}."
     fi
+
+    unset -v subtitle
 }
 
 prin() {
     # If $2 doesn't exist we format $1 as info.
-    [[ -z "$2" ]] && local subtitle_color="$info_color"
+    if [[ "$(trim "$1")" && "$2" ]]; then
+        string="${1}${2:+: $2}"
+    else
+        string="${2:-$1}"
+        local subtitle_color="$info_color"
+    fi
+    string="$(trim "${string//$'\033[0m'}")"
+
+    # Log length if it doesn't exist.
+    if [[ -z "$length" ]]; then
+        length="$(strip_sequences "$string")"
+        length="${#length}"
+    fi
 
     # Format the output.
-    string="${1//$'\033[0m'}${2:+: $2}"
-    string="$(trim "$string")"
     string="${string/:/${reset}${colon_color}:${info_color}}"
     string="${subtitle_color}${bold}${string}"
 
@@ -2552,9 +2613,10 @@ prin() {
 get_underline() {
     if [[ "$underline_enabled" == "on" ]]; then
         printf -v underline "%${length}s"
-        underline="${underline_color}${underline// /$underline_char}"
+        printf "%b\n" "${text_padding:+\033[${text_padding}C}${zws}${underline_color}${underline// /$underline_char}${reset} "
         unset -v length
     fi
+    prin=1
 }
 
 get_line_break() {
@@ -2601,6 +2663,15 @@ trim_quotes() {
     trim_output="${1//\'}"
     trim_output="${trim_output//\"}"
     printf "%s" "$trim_output"
+}
+
+strip_sequences() {
+    strip="${1//$'\033['3[0-9]m}"
+    strip="${strip//$'\033['38\;5\;[0-9]m}"
+    strip="${strip//$'\033['38\;5\;[0-9][0-9]m}"
+    strip="${strip//$'\033['38\;5\;[0-9][0-9][0-9]m}"
+
+    printf "%s\n" "$strip"
 }
 
 uppercase() {
@@ -2666,8 +2737,13 @@ get_distro_colors() {
             ascii_file="arch_old"
         ;;
 
+        "ArchBox"*)
+            set_colors 2 7 1
+            ascii_file="archbox"
+        ;;
+
         "Arch"*)
-            set_colors 4 7 1
+            set_colors 4 4 7 1
             ascii_file="arch"
         ;;
 
@@ -3131,7 +3207,7 @@ get_distro_colors() {
             ascii_file="void"
         ;;
 
-        "Windows 8"* | "Windows 10"*)
+        *"[Windows 10]"* | *"on Windows 10"* | "Windows 8"* | "Windows 10"*)
             set_colors 6 7
             ascii_file="windows10"
         ;;
@@ -3285,13 +3361,18 @@ get_default_config() {
     if [[ -f "/etc/neofetch/config" ]]; then
         default_config="/etc/neofetch/config"
 
-    elif [[ -f "/data/data/com.termux/files/etc/neofetch/config" ]]; then
-        default_config="/data/data/com.termux/files/etc/neofetch/config"
+    elif [[ -f "/usr/local/etc/neofetch/config" ]]; then
+        default_config="/usr/local/etc/neofetch/config"
+
+    elif [[ -f "/data/data/com.termux/files/usr/etc/neofetch/config" ]]; then
+        default_config="/data/data/com.termux/files/usr/etc/neofetch/config"
+
+    elif [[ -f "/boot/home/config/non-packaged/etc/neofetch/config" ]]; then
+        default_config="/boot/home/config/non-packaged/etc/neofetch/config"
 
     else
         [[ -z "$script_dir" ]] && script_dir="$(get_full_path "$0")"
         default_config="${script_dir%/*}/config/config"
-        travis_config="${script_dir%/*}/config/travis"
     fi
 
     if source "$default_config"; then
@@ -3308,12 +3389,6 @@ get_user_config() {
         err "Config: Sourced user config.    (${config_file})"
         old_options
         return
-
-    elif [[ "$config_file" == "travis" ]]; then
-        source "$travis_config"
-        err "Config: Sourced user config.    (${travis_config})"
-        old_options
-        return
     fi
     mkdir -p "${XDG_CONFIG_HOME}/neofetch/"
 
@@ -3322,11 +3397,11 @@ get_user_config() {
     if [[ -f "${XDG_CONFIG_HOME}/neofetch/config" ]]; then
         config_file="${XDG_CONFIG_HOME}/neofetch/config"
 
-    elif [[ -f "/usr/share/neofetch/config" ]]; then
+    elif [[ -f "/etc/neofetch/config" ]]; then
         cp "/usr/share/neofetch/config" "${XDG_CONFIG_HOME}/neofetch"
         config_file="${XDG_CONFIG_HOME}/neofetch/config"
 
-    elif [[ -f "/usr/local/share/neofetch/config" ]]; then
+    elif [[ -f "/usr/local/etc/neofetch/config" ]]; then
         cp "/usr/local/share/neofetch/config" "${XDG_CONFIG_HOME}/neofetch"
         config_file="${XDG_CONFIG_HOME}/neofetch/config"
 
@@ -3476,11 +3551,11 @@ old_options() {
     [[ -n "$image" ]]            && { err "Config: \$image is deprecated, use \$image_source instead."; image_source="$image"; }
 
     # All progress_ variables were changed to bar_.
-    [[ -n "$progress_char" ]]          && err "Config: \$progress_char is deprecated, use \$bar_char_elapsed and \$bar_char_total instead."
-    [[ -n "$progress_border" ]]        && err "Config: \$progress_border is deprecated, use \$bar_border instead."
-    [[ -n "$progress_length" ]]        && err "Config: \$progress_length is deprecated, use \$bar_length instead."
-    [[ -n "$progress_color_elapsed" ]] && err "Config: \$progress_color_elapsed is deprecated, use \$bar_color_elapsed instead."
-    [[ -n "$progress_color_total" ]]   && err "Config: \$progress_color_total is deprecated, use \$bar_color_total instead."
+    [[ -n "$progress_char" ]] && err "Config: \$progress_char is deprecated, use \$bar_char_elapsed and \$bar_char_total instead."
+    [[ -n "$progress_border" ]] && { err "Config: \$progress_border is deprecated, use \$bar_border instead."; bar_border="$progress_border"; }
+    [[ -n "$progress_length" ]] && { err "Config: \$progress_length is deprecated, use \$bar_length instead."; bar_length="$progress_length"; }
+    [[ -n "$progress_color_elapsed" ]] && { err "Config: \$progress_color_elapsed is deprecated, use \$bar_color_elapsed instead."; bar_color_elapsed="$progress_color_elapsed"; }
+    [[ -n "$progress_color_total" ]] && { err "Config: \$progress_color_total is deprecated, use \$bar_color_total instead."; bar_color_total="$progress_color_total"; }
 
     # All cpufreq values were changed in 3.0.
     [[ "$speed_type" == "current" ]] && err "Config: speed_type='current' is deprecated, use speed_type='scaling_cur_freq' instead."
@@ -3496,6 +3571,9 @@ old_options() {
 
     # Fahrenheit support was added to CPU so the options were changed.
     [[ "$cpu_temp" == "on" ]] && { err "Config: cpu_temp='on' is deprecated, use cpu_temp='C' or 'F' instead."; cpu_temp="C"; }
+
+    # Birthday was renamed to Install Date in 3.0
+    [[ -n "$birthday_time" ]] && { err "Config: \$birthday_time is deprecated, use \3install_time instead."; install_time="$birthday_time"; }
 }
 
 cache_uname() {
@@ -3811,7 +3889,7 @@ exit 1
 }
 
 version() { printf "%s" "\
-Neofetch 3.0.1
+Neofetch $version
 
 Copyright (c) 2016-2017 Dylan Araps
 
@@ -4045,7 +4123,7 @@ main() {
 
     # w3m-img: Draw the image a second time to fix
     # rendering issues in specific terminal emulators.
-    [[ "$image_program" == *w3m* ]] && display_image 2>/dev/null
+    [[ "$image_backend" == *w3m* ]] && display_image 2>/dev/null
 
     # Take a screenshot.
     [[ "$scrot" == "on" ]] && take_scrot
